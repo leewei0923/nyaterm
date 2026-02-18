@@ -1,0 +1,73 @@
+import { invoke } from "@tauri-apps/api/core";
+import { memo, useEffect, useState } from "react";
+import type { SessionInfo } from "../../types";
+
+interface ActiveSessionsProps {
+  onSessionClick: (sessionId: string) => void;
+}
+
+/** List of active sessions (polled). Click switches to that session's tab. */
+function ActiveSessions({ onSessionClick }: ActiveSessionsProps) {
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+
+  useEffect(() => {
+    const fetchSessions = async () => {
+      try {
+        const sess = await invoke<SessionInfo[]>("list_sessions");
+        setSessions(sess);
+      } catch {
+        // Backend might not be ready yet
+      }
+    };
+
+    fetchSessions();
+    const interval = setInterval(fetchSessions, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      <div
+        className="p-2 text-[10px] uppercase tracking-wider font-bold border-b flex justify-between items-center"
+        style={{
+          color: "var(--df-text-muted)",
+          borderColor: "var(--df-border)",
+          backgroundColor: "var(--df-bg-section-header)",
+        }}
+      >
+        <span>Active Sessions</span>
+        <span className="text-[10px] font-normal" style={{ color: "var(--df-text-dimmed)" }}>
+          {sessions.length}
+        </span>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 text-xs space-y-0.5 terminal-scroll">
+        {sessions.length === 0 ? (
+          <div className="text-center py-4 text-[11px]" style={{ color: "var(--df-text-dimmed)" }}>
+            No active sessions
+          </div>
+        ) : (
+          sessions.map((session) => (
+            <div
+              key={session.id}
+              className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors df-hover ${!session.connected ? "opacity-50" : ""}`}
+              onClick={() => onSessionClick(session.id)}
+            >
+              <div
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: session.connected ? "#22c55e" : "var(--df-text-dimmed)" }}
+              />
+              <span className="flex-1 truncate" style={{ color: "var(--df-text)" }}>
+                {session.name}
+              </span>
+              <span className="text-[10px]" style={{ color: "var(--df-text-dimmed)" }}>
+                {session.session_type}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default memo(ActiveSessions);

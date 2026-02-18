@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "JetBrains Mono", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-primary: var(--df-primary);
+  --color-primary-hover: var(--df-primary-hover);
+}
+
+/* ── Theme-aware scrollbar ──────────────────────────────────────────────── */
+.terminal-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.terminal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  background: var(--df-scroll-thumb, #30363d);
+  border-radius: 10px;
+}
+
+/* ── Active tab indicator ───────────────────────────────────────────────── */
+.active-tab {
+  border-bottom: 2px solid var(--df-primary, #3b82f6);
+  background-color: color-mix(in srgb, var(--df-primary, #3b82f6) 5%, transparent);
+}
+
+/* ── Material Icons default size ────────────────────────────────────────── */
+.material-icons {
+  font-size: 16px;
+  line-height: 16px;
+}
+
+/* ── Global resets ──────────────────────────────────────────────────────── */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Allow text selection inside terminal */
+.xterm {
+  user-select: text;
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.25s ease-out;
+}
+
+/* ── Theme-aware hover (replaces inline onMouseEnter/onMouseLeave) ──────── */
+.df-hover:hover {
+  background-color: var(--df-bg-hover);
+}
+
+.df-hover-primary:hover {
+  background-color: color-mix(in srgb, var(--df-primary) 20%, transparent);
+}
