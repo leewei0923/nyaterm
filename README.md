@@ -1,6 +1,6 @@
 <div align="center">
     <img src="./public/dragonfly.svg" alt="Dragonfly Logo" width="100" height="100">
-    <h3>Dragonfly is a modern, high-performance SSH client.</h3>
+    <h3>Dragonfly is a modern, high-performance SSH client</h3>
 </div>
 
 ## ✨ Features
