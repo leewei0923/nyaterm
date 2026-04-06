@@ -71,8 +71,11 @@ function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onAddTab }: TabBar
 
   return (
     <div
-      className="flex h-9 overflow-x-auto terminal-scroll shrink-0 border-b"
-      style={{ backgroundColor: "var(--df-bg-panel)", borderColor: "var(--df-border)" }}
+      className="flex h-9 overflow-x-auto overflow-y-hidden terminal-scroll shrink-0"
+      style={{
+        backgroundColor: "var(--df-bg-panel)",
+        boxShadow: "inset 0 -1px 0 var(--df-border)",
+      }}
     >
       {tabs.map((tab) => {
         const isActive = activeTabId === tab.id;
@@ -104,7 +107,7 @@ function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onAddTab }: TabBar
             {/* Mask the bottom border to blend with terminal body */}
             {isActive && (
               <div
-                className="absolute bottom-[-1px] left-0 w-full h-[1px] z-10"
+                className="absolute bottom-0 left-0 w-full h-[1px] z-10"
                 style={{ backgroundColor: "var(--df-bg)" }}
               />
             )}
