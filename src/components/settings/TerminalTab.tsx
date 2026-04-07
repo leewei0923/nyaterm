@@ -113,6 +113,18 @@ export function TerminalTab() {
         />
       </SettingRow>
 
+      {appSettings.ui.show_remote_stats && (
+        <SettingNumberInput
+          label={t("settings.remoteStatsInterval")}
+          desc={t("settings.remoteStatsIntervalDesc")}
+          min={1}
+          max={60}
+          step={1}
+          value={appSettings.ui.remote_stats_interval ?? 3}
+          onChange={(v) => updateUi({ remote_stats_interval: v || 3 })}
+        />
+      )}
+
       {/* ── Action Links ─────────────────────────────────────────────────── */}
       <div className="space-y-3 pt-2 border-t">
         <SettingRow

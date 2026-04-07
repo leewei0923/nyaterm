@@ -90,45 +90,95 @@ export interface RestorableTab {
   connection_id?: string;
 }
 
-export type PanelId =
+export type LeftPanelId =
   | "fileExplorer"
   | "fileTransfer"
+  | "securityAuth";
+
+export type RightPanelId =
   | "savedConnections"
   | "activeSessions"
-  | "commandHistory";
+  | "commandHistory"
+  | "resourceMonitor";
 
-export interface PanelLayout {
-  left: PanelId[];
-  right: PanelId[];
+export type ActivityBarZone = "left_top" | "left_bottom" | "right_top" | "right_bottom";
+
+export interface ActivityBarLayout {
+  left_top: string[];
+  left_bottom: string[];
+  right_top: string[];
+  right_bottom: string[];
+  /** When true every activity bar icon shows its name below the icon. */
+  show_labels: boolean;
 }
 
-/** Layout preferences: panel widths, visibility flags, theme. */
+/** Layout preferences: panel widths, active panels, theme. */
 export interface UiConfig {
   open_tabs: RestorableTab[];
   left_width: number;
   right_width: number;
-  saved_conn_height: number;
-  history_height: number;
   quick_cmd_height: number;
-  file_transfer_height: number;
-  show_file_explorer: boolean;
-  show_file_transfer: boolean;
-  show_saved_connections: boolean;
-  show_active_sessions: boolean;
-  show_command_history: boolean;
-  show_quick_commands: boolean;
+  /** ID of whichever panel is currently open on the left side. */
+  active_left_panel: string | null;
+  /** ID of whichever panel is currently open on the right side. */
+  active_right_panel: string | null;
+  show_quick_cmd_bar: boolean;
   zoom_level: number;
   language?: string;
-  panel_layout: PanelLayout;
   show_remote_stats: boolean;
+  remote_stats_interval: number;
   saved_connections_sort_mode?: string;
+  activity_bar_layout: ActivityBarLayout;
 }
 
 /** Resource usage stats fetched from the active remote SSH host. */
+export interface RemoteStatsSystem {
+  hostname: string;
+  uptime_sec: number;
+  os: string;
+  arch: string;
+}
+
+export interface RemoteStatsLoad {
+  load1: number;
+  load5: number;
+  load15: number;
+}
+
+export interface RemoteStatsCpu {
+  model: string;
+  cores: number;
+  usage: number;
+}
+
+export interface RemoteStatsMemory {
+  used: number;
+  available: number;
+  cached: number;
+}
+
+export interface RemoteStatsNetwork {
+  nic: string;
+  state: string;
+  rx_bytes_per_sec: number;
+  tx_bytes_per_sec: number;
+}
+
+export interface RemoteStatsDisk {
+  device: string;
+  mount: string;
+  total: number;
+  available: number;
+  use_percent: number;
+}
+
 export interface RemoteStats {
-  cpu_percent: number;
-  mem_used_mb: number;
-  mem_total_mb: number;
+  system: RemoteStatsSystem;
+  load: RemoteStatsLoad;
+  cpu: RemoteStatsCpu;
+  memory: RemoteStatsMemory;
+  networks: RemoteStatsNetwork[];
+  disks: RemoteStatsDisk[];
 }
 
 /** Labeled command shortcut for quick execution. */
