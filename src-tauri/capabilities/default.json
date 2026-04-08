@@ -22,10 +22,12 @@
           "path": "$APPLOCALDATA/logs/**"
         },
         {
-          "path": "$TEMP"
+          "path": "$TEMP",
+          "app": true
         },
         {
-          "path": "$TEMP/**"
+          "path": "$TEMP/**",
+          "app": true
         }
       ]
     },
