@@ -2,7 +2,7 @@ use super::{
     get_config_dir, load_app_settings, load_json, load_proxies, save_app_settings, save_json,
     save_proxies, uuid_v4, ProxyConfig, ProxySettings,
 };
-use crate::error::{AppError, AppResult};
+use crate::core::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 

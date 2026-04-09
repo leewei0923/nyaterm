@@ -1,0 +1,321 @@
+use super::client::{SshHandle, SshHandler};
+use crate::core::error::{AppError, AppResult};
+use crate::core::ssh::osc::{self, OscStripper, ShellKind};
+use crate::core::{RecordingManager, SessionCommand, SessionManager, SharedCwd};
+use russh::{client, ChannelMsg};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
+
+/// Tries to detect the remote shell via an exec channel with a timeout.
+///
+/// Returns the detected [`ShellKind`], or `None` when the exec channel
+/// fails / returns empty output — which is the normal behaviour of
+/// non-standard "shells" such as JumpServer (koko).
+async fn detect_shell_type(handle: &mut client::Handle<SshHandler>) -> Option<ShellKind> {
+    let fut = async {
+        let mut ch = handle.channel_open_session().await.ok()?;
+        ch.exec(
+            true,
+            r#"printf '%s\n' "$SHELL"; ps -p $$ -o comm= 2>/dev/null || true"#,
+        )
+        .await
+        .ok()?;
+
+        let mut output = String::new();
+        while let Some(msg) = ch.wait().await {
+            if let ChannelMsg::Data { ref data } = msg {
+                output.push_str(&String::from_utf8_lossy(data));
+            }
+        }
+
+        let kind = ShellKind::from_name(output.trim());
+        if kind == ShellKind::Unknown || kind == ShellKind::PowerShell {
+            None
+        } else {
+            Some(kind)
+        }
+    };
+
+    timeout(Duration::from_millis(1200), fut)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Opens a PTY shell channel and detects the remote shell type.
+///
+/// Returns `(channel, Option<injection_script>, ready_marker)`.
+/// The injection script is **not** sent here — the IO loop defers it until
+/// the shell has produced its initial output (banner / MOTD) so that the
+/// welcome text is not swallowed.
+pub(super) async fn open_shell_channel(
+    handle: &mut client::Handle<SshHandler>,
+    session_id: &str,
+) -> AppResult<(russh::Channel<client::Msg>, Option<String>, String)> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|error| AppError::Channel(format!("Failed to open channel: {}", error)))?;
+
+    channel
+        .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+        .await
+        .map_err(|error| AppError::Channel(format!("PTY request failed: {}", error)))?;
+
+    channel
+        .request_shell(false)
+        .await
+        .map_err(|error| AppError::Channel(format!("Shell request failed: {}", error)))?;
+
+    let ready_marker = osc::build_ready_marker(session_id);
+
+    let injection_script = match detect_shell_type(handle).await {
+        Some(shell_kind) => {
+            let script = osc::injection_script(shell_kind, &ready_marker);
+            if script.is_some() {
+                tracing::debug!(
+                    session_id = %session_id,
+                    shell = ?shell_kind,
+                    "Will inject OSC 7 hook after initial output"
+                );
+            } else {
+                tracing::debug!(
+                    session_id = %session_id,
+                    shell = ?shell_kind,
+                    "Shell detected but no injection script available — skipping"
+                );
+            }
+            script
+        }
+        None => {
+            tracing::debug!(
+                session_id = %session_id,
+                "Shell detection returned no output — skipping OSC 7 injection"
+            );
+            None
+        }
+    };
+
+    Ok((channel, injection_script, ready_marker))
+}
+
+/// Injection phase state machine.
+///
+/// ```text
+/// ┌─────────────┐  first data   ┌─────────────┐  ready marker  ┌────────┐
+/// │ WaitInitial  │──────────────▶│ Suppressing  │──────────────▶│ Normal │
+/// └─────────────┘  (inject sent) └─────────────┘               └────────┘
+///                                       │ timeout
+///                                       └──────────────────────▶│ Normal │
+/// ```
+///
+/// When no injection script is provided we start directly in `Normal`.
+#[derive(PartialEq)]
+enum IoPhase {
+    /// Passing through all output; waiting for the first data chunk so we
+    /// can display the banner / MOTD before injecting.
+    WaitInitial,
+    /// Injection script sent; discarding visible output (echo) until the
+    /// ready marker appears.
+    Suppressing,
+    /// Normal operation — strip our OSC sequences, forward everything else.
+    Normal,
+}
+
+pub(super) async fn ssh_io_loop(
+    app: AppHandle,
+    session_id: String,
+    manager: Arc<SessionManager>,
+    mut channel: russh::Channel<client::Msg>,
+    _handle: SshHandle,
+    mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
+    cwd: SharedCwd,
+    connection_id: Option<String>,
+    injection_script: Option<String>,
+    ready_marker: String,
+) {
+    const INJECT_TIMEOUT_SECS: u64 = 10;
+
+    let output_event = format!("terminal-output-{}", session_id);
+    let cwd_event = format!("cwd-changed-{}", session_id);
+    let closed_event = format!("session-closed-{}", session_id);
+
+    let recording_mgr: Option<Arc<RecordingManager>> = app
+        .try_state::<Arc<RecordingManager>>()
+        .map(|state| state.inner().clone());
+
+    let mut attached = false;
+    let mut buffer: Vec<String> = Vec::new();
+    let mut stripper = OscStripper::new(&ready_marker);
+
+    let mut phase = if injection_script.is_some() {
+        IoPhase::WaitInitial
+    } else {
+        IoPhase::Normal
+    };
+    let mut pending_script = injection_script;
+
+    let inject_deadline =
+        tokio::time::sleep(std::time::Duration::from_secs(INJECT_TIMEOUT_SECS));
+    tokio::pin!(inject_deadline);
+
+    loop {
+        tokio::select! {
+            biased;
+
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(SessionCommand::Attach) => {
+                        attached = true;
+                        for text in buffer.drain(..) {
+                            let _ = app.emit(&output_event, &text);
+                        }
+                    }
+                    Some(SessionCommand::Write(data)) => {
+                        if let Some(ref recorder) = recording_mgr {
+                            recorder.write_input(&session_id, &data);
+                        }
+                        let _ = channel.data(&data[..]).await;
+                    }
+                    Some(SessionCommand::Resize { cols, rows }) => {
+                        let _ = channel.window_change(cols, rows, 0, 0).await;
+                    }
+                    Some(SessionCommand::Close) | None => {
+                        let _ = channel.close().await;
+                        break;
+                    }
+                }
+            }
+            msg = channel.wait() => {
+                match msg {
+                    Some(ChannelMsg::Data { ref data }) => {
+                        let text = String::from_utf8_lossy(data).to_string();
+                        let result = stripper.push(&text);
+
+                        match phase {
+                            IoPhase::WaitInitial => {
+                                // First output from the shell — emit it so the
+                                // user sees the banner / MOTD, then inject.
+                                emit_output(
+                                    &app, &output_event, &cwd_event, &cwd,
+                                    &recording_mgr, &session_id,
+                                    &result, attached, &mut buffer,
+                                ).await;
+
+                                if let Some(script) = pending_script.take() {
+                                    let _ = channel.data(script.as_bytes()).await;
+                                }
+                                phase = IoPhase::Suppressing;
+                                inject_deadline.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + std::time::Duration::from_secs(INJECT_TIMEOUT_SECS),
+                                );
+                            }
+                            IoPhase::Suppressing => {
+                                // Discard visible text (injection echo) but
+                                // still honour CWD changes and ready marker.
+                                for path in &result.cwd_paths {
+                                    *cwd.lock().await = Some(path.clone());
+                                    let _ = app.emit(&cwd_event, path);
+                                }
+                                if result.ready {
+                                    phase = IoPhase::Normal;
+                                }
+                            }
+                            IoPhase::Normal => {
+                                emit_output(
+                                    &app, &output_event, &cwd_event, &cwd,
+                                    &recording_mgr, &session_id,
+                                    &result, attached, &mut buffer,
+                                ).await;
+                            }
+                        }
+                    }
+                    Some(ChannelMsg::ExtendedData { ref data, .. }) => {
+                        let text = String::from_utf8_lossy(data).to_string();
+                        if let Some(ref recorder) = recording_mgr {
+                            recorder.write_output(&session_id, &text);
+                        }
+                        if attached {
+                            let _ = app.emit(&output_event, &text);
+                        } else {
+                            buffer.push(text);
+                        }
+                    }
+                    Some(ChannelMsg::Eof) | None => break,
+                    _ => {}
+                }
+            }
+            _ = &mut inject_deadline, if phase == IoPhase::Suppressing => {
+                phase = IoPhase::Normal;
+                let flushed = stripper.flush();
+                tracing::debug!(
+                    session_id = %session_id,
+                    buffered_bytes = flushed.len(),
+                    "Injection timeout — falling back to passthrough mode"
+                );
+                if !flushed.is_empty() {
+                    if let Some(ref recorder) = recording_mgr {
+                        recorder.write_output(&session_id, &flushed);
+                    }
+                    if attached {
+                        let _ = app.emit(&output_event, &flushed);
+                    } else {
+                        buffer.push(flushed);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(ref recorder) = recording_mgr {
+        recorder.cleanup_session(&session_id);
+    }
+
+    manager.remove_session(&session_id).await;
+
+    if let Some(ref conn_id) = connection_id {
+        if let Some(tunnel_mgr) = app.try_state::<Arc<super::TunnelManager>>() {
+            tunnel_mgr
+                .close_auto_tunnels_for_connection(&app, conn_id)
+                .await;
+        }
+    }
+
+    tracing::info!(session_id = %session_id, "SSH session closed");
+    let _ = app.emit(&closed_event, ());
+}
+
+/// Helper: emit visible text + CWD updates from an [`OscResult`].
+async fn emit_output(
+    app: &AppHandle,
+    output_event: &str,
+    cwd_event: &str,
+    cwd: &SharedCwd,
+    recording_mgr: &Option<Arc<RecordingManager>>,
+    session_id: &str,
+    result: &osc::OscResult,
+    attached: bool,
+    buffer: &mut Vec<String>,
+) {
+    for path in &result.cwd_paths {
+        *cwd.lock().await = Some(path.clone());
+        let _ = app.emit(cwd_event, path);
+    }
+
+    if result.visible.is_empty() {
+        return;
+    }
+
+    if let Some(ref recorder) = recording_mgr {
+        recorder.write_output(session_id, &result.visible);
+    }
+
+    if attached {
+        let _ = app.emit(output_event, &result.visible);
+    } else {
+        buffer.push(result.visible.clone());
+    }
+}

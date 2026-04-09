@@ -1,6 +1,6 @@
 use super::ui::UiConfig;
 use super::{default_false, default_true, get_config_dir, load_json, save_json};
-use crate::error::AppResult;
+use crate::core::error::AppResult;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 

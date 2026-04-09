@@ -2,21 +2,17 @@
 //!
 //! Registers all invoke handlers, manages SessionManager state, and sets up tracing.
 
-mod commands;
+mod cmd;
 mod config;
-mod crypto;
-mod error;
-mod fuzzy;
-mod import;
-mod runtime;
-mod ssh;
-mod translate;
+mod core;
+mod utils;
 
-use runtime::{RecordingManager, SessionManager};
-use ssh::{PendingAuthManager, TunnelManager};
 use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+use crate::core::ssh::{PendingAuthManager, TunnelManager};
+use crate::core::{RecordingManager, SessionManager};
 
 fn init_tracing(log_dir: std::path::PathBuf) {
     let _ = std::fs::create_dir_all(&log_dir);
@@ -130,74 +126,73 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::stats::get_system_fonts,
-            commands::session_cmds::create_ssh_session,
-            commands::session_cmds::create_local_session,
-            commands::session_cmds::write_to_session,
-            commands::session_cmds::resize_session,
-            commands::session_cmds::attach_session,
-            commands::session_cmds::close_session,
-            commands::session_cmds::list_sessions,
-            commands::session_cmds::add_command_history,
-            commands::session_cmds::get_command_history,
-            commands::session_cmds::fuzzy_search_history,
-            commands::session_cmds::fuzzy_search_commands,
-            commands::session_cmds::start_recording,
-            commands::session_cmds::stop_recording,
-            commands::session_cmds::is_recording,
-            commands::session_cmds::submit_otp_response,
-            commands::session_cmds::cancel_otp_request,
-            commands::sftp_cmds::get_home_dir,
-            commands::sftp_cmds::list_remote_dir,
-            commands::sftp_cmds::delete_remote_file,
-            commands::sftp_cmds::rename_remote_file,
-            commands::sftp_cmds::download_remote_file,
-            commands::sftp_cmds::upload_local_file,
-            commands::sftp_cmds::get_file_properties,
-            commands::sftp_cmds::create_remote_file,
-            commands::sftp_cmds::create_remote_dir,
-            commands::sftp_cmds::create_remote_symlink,
-            commands::sftp_cmds::chmod_remote_file,
-            commands::sftp_cmds::download_remote_directory,
-            commands::sftp_cmds::upload_local_directory,
-            commands::config_cmds::get_saved_connections,
-            commands::config_cmds::save_connection,
-            commands::config_cmds::delete_connection,
-            commands::config_cmds::reorder_items,
-            commands::config_cmds::get_ssh_keys,
-            commands::config_cmds::get_ssh_key_passphrase,
-            commands::config_cmds::save_ssh_key,
-            commands::config_cmds::delete_ssh_key,
-            commands::config_cmds::get_groups,
-            commands::config_cmds::save_group,
-            commands::config_cmds::delete_group,
-            commands::config_cmds::clear_all_connections,
-            commands::config_cmds::get_quick_commands,
-            commands::config_cmds::save_quick_commands,
-            commands::config_cmds::get_saved_passwords,
-            commands::config_cmds::get_saved_password_value,
-            commands::config_cmds::save_password,
-            commands::config_cmds::delete_password,
-            commands::settings_cmds::get_app_settings,
-            commands::settings_cmds::save_app_settings,
-            commands::settings_cmds::verify_lock_password,
-            runtime::watcher::start_file_watch,
-            runtime::watcher::stop_file_watch,
-            translate::translate_text,
-            import::import_sessions,
-            commands::stats::get_remote_stats,
-            commands::stats::get_terminal_cwd,
-            commands::tunnel_cmds::get_tunnels,
-            commands::tunnel_cmds::save_tunnel,
-            commands::tunnel_cmds::delete_tunnel,
-            commands::tunnel_cmds::open_tunnel,
-            commands::tunnel_cmds::close_tunnel,
-            commands::proxy_cmds::get_proxies,
-            commands::proxy_cmds::save_proxy,
-            commands::proxy_cmds::delete_proxy,
-            commands::proxy_cmds::get_proxy_password,
+            cmd::stats::get_system_fonts,
+            cmd::session::create_ssh_session,
+            cmd::session::create_local_session,
+            cmd::session::write_to_session,
+            cmd::session::resize_session,
+            cmd::session::attach_session,
+            cmd::session::close_session,
+            cmd::session::list_sessions,
+            cmd::session::add_command_history,
+            cmd::session::get_command_history,
+            cmd::session::fuzzy_search_history,
+            cmd::session::fuzzy_search_commands,
+            cmd::session::start_recording,
+            cmd::session::stop_recording,
+            cmd::session::is_recording,
+            cmd::session::submit_otp_response,
+            cmd::session::cancel_otp_request,
+            cmd::sftp::get_home_dir,
+            cmd::sftp::list_remote_dir,
+            cmd::sftp::delete_remote_file,
+            cmd::sftp::rename_remote_file,
+            cmd::sftp::download_remote_file,
+            cmd::sftp::upload_local_file,
+            cmd::sftp::get_file_properties,
+            cmd::sftp::create_remote_file,
+            cmd::sftp::create_remote_dir,
+            cmd::sftp::create_remote_symlink,
+            cmd::sftp::chmod_remote_file,
+            cmd::sftp::download_remote_directory,
+            cmd::sftp::upload_local_directory,
+            cmd::config::get_saved_connections,
+            cmd::config::save_connection,
+            cmd::config::delete_connection,
+            cmd::config::reorder_items,
+            cmd::config::get_ssh_keys,
+            cmd::config::get_ssh_key_passphrase,
+            cmd::config::save_ssh_key,
+            cmd::config::delete_ssh_key,
+            cmd::config::get_groups,
+            cmd::config::save_group,
+            cmd::config::delete_group,
+            cmd::config::clear_all_connections,
+            cmd::config::get_quick_commands,
+            cmd::config::save_quick_commands,
+            cmd::config::get_saved_passwords,
+            cmd::config::get_saved_password_value,
+            cmd::config::save_password,
+            cmd::config::delete_password,
+            cmd::settings::get_app_settings,
+            cmd::settings::save_app_settings,
+            cmd::settings::verify_lock_password,
+            core::watcher::start_file_watch,
+            core::watcher::stop_file_watch,
+            core::translate::translate_text,
+            core::importer::import_sessions,
+            cmd::stats::get_remote_stats,
+            cmd::stats::get_terminal_cwd,
+            cmd::tunnel::get_tunnels,
+            cmd::tunnel::save_tunnel,
+            cmd::tunnel::delete_tunnel,
+            cmd::tunnel::open_tunnel,
+            cmd::tunnel::close_tunnel,
+            cmd::proxy::get_proxies,
+            cmd::proxy::save_proxy,
+            cmd::proxy::delete_proxy,
+            cmd::proxy::get_proxy_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

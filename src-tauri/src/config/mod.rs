@@ -19,7 +19,7 @@ pub use sessions::*;
 pub use settings::*;
 pub use tunnels::*;
 
-use crate::error::{AppError, AppResult};
+use crate::core::error::{AppError, AppResult};
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
