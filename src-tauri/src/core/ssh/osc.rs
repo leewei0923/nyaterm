@@ -139,9 +139,7 @@ pub struct OscStripper {
 
 impl OscStripper {
     pub fn new(_ready_marker: &str) -> Self {
-        Self {
-            buf: String::new(),
-        }
+        Self { buf: String::new() }
     }
 
     /// Feed a chunk of terminal output.  Returns visible text with OSC
