@@ -11,7 +11,7 @@ export default function SecurityAuthPanel() {
     <div className="h-full flex flex-col" style={{ backgroundColor: "var(--df-bg-panel)" }}>
       <PanelHeader title={t("securityAuth.title")} />
       <div className="flex-1 overflow-y-auto p-3 terminal-scroll">
-        <Tabs defaultValue="passwords" className="w-full">
+        <Tabs defaultValue="keys" className="w-full">
           <TabsList className="grid w-full grid-cols-2 h-8">
             <TabsTrigger value="keys" className="text-xs">
               {t("securityAuth.keys")}
