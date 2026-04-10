@@ -2,7 +2,7 @@ use super::{
     get_config_dir, load_app_settings, load_json, load_proxies, save_app_settings, save_json,
     save_proxies, uuid_v4, ProxyConfig, ProxySettings,
 };
-use crate::core::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -115,7 +115,7 @@ pub fn load_config(app: &AppHandle) -> AppResult<AppConfig> {
 /// Migrates connections that still have an inline `password` field to use the password store.
 /// Creates a password entry for each, sets `password_id`, and clears the legacy field.
 fn migrate_passwords_to_store(app: &AppHandle, cfg: &mut SessionsConfig) -> AppResult<()> {
-    use super::passwords::{load_passwords, save_passwords, SavedPassword};
+    use super::password::{load_passwords, save_passwords, SavedPassword};
 
     let mut pw_cfg = load_passwords(app)?;
 

@@ -1,5 +1,5 @@
 use super::{default_false, default_true, get_config_dir, load_json, save_json, uuid_v4};
-use crate::core::error::AppResult;
+use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 

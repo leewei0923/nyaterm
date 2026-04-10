@@ -2,24 +2,44 @@
 //!
 //! Stores JSON files in `~/.dragonfly/`. Credentials are AES-256-GCM encrypted in-place.
 
-mod keys;
-mod passwords;
-mod proxies;
-mod quick_commands;
-mod sessions;
+mod connection;
+mod key;
+mod password;
+mod proxy;
+mod quick_command;
 mod settings;
-mod tunnels;
+mod tunnel;
 mod ui;
 
-pub use keys::*;
-pub use passwords::*;
-pub use proxies::*;
-pub use quick_commands::*;
-pub use sessions::*;
-pub use settings::*;
-pub use tunnels::*;
+#[allow(unused_imports)]
+pub use connection::{
+    load_config, load_connection_by_id, load_sessions, save_config, save_sessions, AppConfig,
+    ConnectionNetworkSettings, Group, SavedConnection, SessionsConfig,
+};
+#[allow(unused_imports)]
+pub use key::{decrypt_key_pem, load_key_by_id, load_keys, save_keys, KeysConfig, SshKey};
+#[allow(unused_imports)]
+pub use password::{
+    load_password_by_id, load_passwords, save_passwords, PasswordsConfig, SavedPassword,
+};
+#[allow(unused_imports)]
+pub use proxy::{load_proxies, load_proxy_by_id, save_proxies, ProxyConfig};
+#[allow(unused_imports)]
+pub use quick_command::{
+    load_quick_commands, save_quick_commands, QuickCommand, QuickCommandCategory,
+    QuickCommandsConfig,
+};
+#[allow(unused_imports)]
+pub use settings::{
+    load_app_settings, save_app_settings, ActionLinksMatcherSettings, AppSettings,
+    AppearanceSettings, GeneralSettings, InteractionSettings, KeywordHighlightRule, ProxySettings,
+    SearchEngine, SearchSettings, SecuritySettings, TerminalSettings, TransferSettings,
+    TranslationSettings,
+};
+#[allow(unused_imports)]
+pub use tunnel::{load_tunnels, save_tunnels, TunnelConfig, TunnelsConfig};
 
-use crate::core::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult};
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;

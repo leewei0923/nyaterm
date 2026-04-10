@@ -1,5 +1,5 @@
 use crate::config::{self, Group, QuickCommandsConfig, SavedConnection, SavedPassword, SshKey};
-use crate::core::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult};
 use crate::utils::crypto;
 use tauri::Emitter;
 
