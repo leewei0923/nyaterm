@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import ResizeHandle from "@/components/layout/ResizeHandle";
 import type { PaneSplitDirection, Tab } from "@/types/global";
 import {
@@ -144,8 +144,14 @@ function LeafWindow({
 }: {
   leaf: TerminalWindowLeaf;
 } & Omit<TabWindowsWorkspaceProps, "layout" | "onUpdateWindowSplitRatio">) {
-  const tabs = leaf.tabIds.map((tabId) => tabsById.get(tabId)).filter((tab): tab is Tab => !!tab);
-  const contentTabs = Array.from(tabsById.values()).filter((tab) => leaf.tabIds.includes(tab.id));
+  const tabs = useMemo(
+    () => leaf.tabIds.map((tabId) => tabsById.get(tabId)).filter((tab): tab is Tab => !!tab),
+    [leaf.tabIds, tabsById],
+  );
+  const contentTabs = useMemo(
+    () => Array.from(tabsById.values()).filter((tab) => leaf.tabIds.includes(tab.id)),
+    [leaf.tabIds, tabsById],
+  );
   const activeTab =
     (leaf.activeTabId ? tabs.find((tab) => tab.id === leaf.activeTabId) : null) ?? tabs[0] ?? null;
 

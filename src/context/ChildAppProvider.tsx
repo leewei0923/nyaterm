@@ -185,6 +185,7 @@ export function ChildAppProvider({ children }: { children: ReactNode }) {
         closePane: noop,
         reorderTabs: noop,
         updateTab: noopAsync,
+        closeTabs: noop,
         closeTab: noop,
         persistTabsNow: noopAsync,
         appSettings,
