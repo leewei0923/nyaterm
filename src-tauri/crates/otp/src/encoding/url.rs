@@ -28,12 +28,13 @@ pub fn encode(data: &[u8]) -> String {
 pub enum DecodeUrlError {
     InvalidHex(String),
     UnexpectedEnd,
+    InvalidUtf8,
 }
 
 /// Percent-decodes a URL-encoded string.
 pub fn decode(data: &str) -> Result<String, DecodeUrlError> {
     let input = data.as_bytes();
-    let mut output = String::with_capacity(input.len());
+    let mut bytes = Vec::with_capacity(input.len());
     let mut i = 0;
 
     while i < input.len() {
@@ -46,17 +47,17 @@ pub fn decode(data: &str) -> Result<String, DecodeUrlError> {
                 let hex_str = std::str::from_utf8(hex).unwrap_or("");
                 let byte = u8::from_str_radix(hex_str, 16)
                     .map_err(|_| DecodeUrlError::InvalidHex(hex_str.to_string()))?;
-                output.push(byte as char);
+                bytes.push(byte);
                 i += 3;
             }
             b => {
-                output.push(b as char);
+                bytes.push(b);
                 i += 1;
             }
         }
     }
 
-    Ok(output)
+    String::from_utf8(bytes).map_err(|_| DecodeUrlError::InvalidUtf8)
 }
 
 impl std::fmt::Display for DecodeUrlError {
@@ -64,6 +65,7 @@ impl std::fmt::Display for DecodeUrlError {
         match self {
             DecodeUrlError::InvalidHex(s) => write!(f, "invalid hex sequence '%{s}'"),
             DecodeUrlError::UnexpectedEnd => write!(f, "unexpected end of percent-encoding"),
+            DecodeUrlError::InvalidUtf8 => write!(f, "invalid utf-8 sequence"),
         }
     }
 }
