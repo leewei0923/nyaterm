@@ -15,6 +15,7 @@ import { useKeywordHighlighter } from "@/hooks/useKeywordHighlighter";
 import { useShellIntegration } from "@/hooks/useShellIntegration";
 import { useTerminalSearch } from "@/hooks/useTerminalSearch";
 import { useTerminalSettings } from "@/hooks/useTerminalSettings";
+import { readClipboardText } from "@/lib/clipboard";
 import { hexLuminance } from "@/lib/keywordHighlightPresets";
 import ActionLinkMenu from "./ActionLinkMenu";
 import ActionLinkTooltip from "./ActionLinkTooltip";
@@ -303,8 +304,7 @@ export default function XTerminal({
           }
           case "KeyV":
             e.preventDefault();
-            navigator.clipboard
-              .readText()
+            readClipboardText()
               .then((text) => {
                 pasteText(text);
               })
@@ -733,11 +733,9 @@ export default function XTerminal({
       e.preventDefault();
       const sel = terminal.getSelection();
       if (sel) {
-        navigator.clipboard.writeText(sel).catch(() => {});
-        terminal.clearSelection();
+        pasteText(sel);
       } else {
-        navigator.clipboard
-          .readText()
+        readClipboardText()
           .then((text) => {
             pasteText(text);
           })

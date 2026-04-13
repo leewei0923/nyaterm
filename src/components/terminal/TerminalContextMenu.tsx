@@ -15,6 +15,7 @@ import {
 } from "react-icons/md";
 import { useApp } from "@/context/AppContext";
 import { MOD } from "@/hooks/useGlobalShortcuts";
+import { readClipboardText } from "@/lib/clipboard";
 import type { SearchEngine } from "@/types/global";
 import TranslationDialog from "../dialog/terminal/TranslationDialog";
 import { type QuickIconDef, SEARCH_ICONS } from "../icons";
@@ -92,7 +93,7 @@ export default function TerminalContextMenu({
       e.stopPropagation();
       (async () => {
         try {
-          const text = await navigator.clipboard.readText();
+          const text = await readClipboardText();
           pasteText(text);
         } catch {
           /* clipboard access denied */
@@ -107,7 +108,7 @@ export default function TerminalContextMenu({
 
   const doPaste = useCallback(async () => {
     try {
-      const text = await navigator.clipboard.readText();
+      const text = await readClipboardText();
       pasteText(text);
     } catch {
       /* clipboard access denied */

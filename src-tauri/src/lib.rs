@@ -29,6 +29,7 @@ pub fn run() {
         .setup(move |a| app::setup(a, session_manager))
         .on_window_event(app::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            cmd::clipboard::read_clipboard_text,
             cmd::settings::get_system_fonts,
             cmd::session::create_ssh_session,
             cmd::session::create_local_session,
