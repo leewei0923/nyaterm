@@ -19,8 +19,10 @@ export function useKeywordHighlighter(
   appSettings: AppSettings,
   sessionId: string,
   isDark: boolean,
+  suspended = false,
 ): void {
   const highlighterRef = useRef<KeywordHighlighter | null>(null);
+  const enabled = appSettings.terminal.keyword_highlights_enabled ?? false;
 
   // Merge user rules (higher priority) + built-in rules (lower priority).
   // User rules carry two color fields; pick the right one for the current theme
@@ -41,15 +43,22 @@ export function useKeywordHighlighter(
   // Create the highlighter once per terminal session.
   // Relies on XTerminal's terminal-creation effect running first (same dep).
   useEffect(() => {
+    if (!enabled) {
+      highlighterRef.current?.dispose();
+      highlighterRef.current = null;
+      return;
+    }
+
     const term = terminalRef.current;
     if (!term) return;
 
     const highlighter = new KeywordHighlighter(term);
     highlighter.setRules(
       mergedRules,
-      appSettings.terminal.keyword_highlights_enabled ?? false,
+      enabled,
       appSettings.terminal.keyword_highlights_across_wrapped_lines ?? false,
     );
+    highlighter.setSuspended(suspended);
     highlighterRef.current = highlighter;
 
     return () => {
@@ -57,7 +66,7 @@ export function useKeywordHighlighter(
       highlighterRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, enabled]);
 
   // Re-push rules whenever settings change or theme family switches.
   useEffect(() => {
@@ -65,12 +74,16 @@ export function useKeywordHighlighter(
     if (!highlighter) return;
     highlighter.setRules(
       mergedRules,
-      appSettings.terminal.keyword_highlights_enabled ?? false,
+      enabled,
       appSettings.terminal.keyword_highlights_across_wrapped_lines ?? false,
     );
   }, [
     mergedRules,
-    appSettings.terminal.keyword_highlights_enabled,
+    enabled,
     appSettings.terminal.keyword_highlights_across_wrapped_lines,
   ]);
+
+  useEffect(() => {
+    highlighterRef.current?.setSuspended(suspended);
+  }, [suspended]);
 }

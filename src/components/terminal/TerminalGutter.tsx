@@ -8,6 +8,7 @@ interface TerminalGutterProps {
   showTimestamps: boolean;
   lineTimestamps: Map<number, number>;
   sessionId?: string;
+  suspended?: boolean;
 }
 
 interface GutterLine {
@@ -38,6 +39,7 @@ export default function TerminalGutter({
   showTimestamps,
   lineTimestamps,
   sessionId,
+  suspended = false,
 }: TerminalGutterProps) {
   const rafRef = useRef(0);
   const viewportYRef = useRef(0);
@@ -51,6 +53,7 @@ export default function TerminalGutter({
   });
 
   const computeLines = useCallback(() => {
+    if (suspended) return;
     const terminal = terminalRef.current;
     if (!terminal || !terminal.element) return;
 
@@ -105,7 +108,7 @@ export default function TerminalGutter({
       fontFamily: String(terminal.options.fontFamily ?? "inherit"),
       fontSize: Number(terminal.options.fontSize ?? 12),
     });
-  }, [terminalRef, lineTimestamps, showLineNumbers, showTimestamps]);
+  }, [suspended, terminalRef, lineTimestamps, showLineNumbers, showTimestamps]);
 
   const scheduleUpdate = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -115,6 +118,11 @@ export default function TerminalGutter({
   }, [computeLines]);
 
   useEffect(() => {
+    if (suspended) {
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
+
     let disposed = false;
     let handleExternalRefresh: ((event: Event) => void) | null = null;
     let disposables: Array<{ dispose: () => void }> = [];
@@ -174,13 +182,14 @@ export default function TerminalGutter({
         window.removeEventListener("dragonfly:refresh-gutter", handleExternalRefresh);
       }
     };
-  }, [terminalRef, scheduleUpdate, sessionId]);
+  }, [suspended, terminalRef, scheduleUpdate, sessionId]);
 
   useEffect(() => {
+    if (suspended) return;
     scheduleUpdate();
-  }, [showLineNumbers, showTimestamps, scheduleUpdate]);
+  }, [showLineNumbers, showTimestamps, scheduleUpdate, suspended]);
 
-  if (!showLineNumbers && !showTimestamps) {
+  if (suspended || (!showLineNumbers && !showTimestamps)) {
     return null;
   }
 

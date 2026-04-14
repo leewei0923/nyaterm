@@ -272,6 +272,7 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   private _options: ActionLinksAddonOptions;
   private _disposables: IDisposable[] = [];
   private _providerDisposable: IDisposable | null = null;
+  private _suspended = false;
 
   // Link computation cache: logical-line text → ActionLink[]
   private _cache = new Map<string, ActionLink[]>();
@@ -351,6 +352,20 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
     return this._matchers;
   }
 
+  setSuspended(suspended: boolean): void {
+    if (this._suspended === suspended) return;
+    this._suspended = suspended;
+
+    if (suspended) {
+      this._options.hideTooltip?.();
+      this._clearAllDecorations();
+      return;
+    }
+
+    this._cache.clear();
+    this._scheduleDecoRefresh();
+  }
+
   setOptions(options: Partial<ActionLinksAddonOptions>): void {
     this._options = { ...this._options, ...options };
   }
@@ -362,7 +377,7 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   /* ILinkProvider */
   provideLinks(bufferLineNumber: number, callback: (links: ILink[] | undefined) => void): void {
     const terminal = this._terminal;
-    if (!terminal || this._matchers.length === 0) {
+    if (!terminal || this._suspended || this._matchers.length === 0) {
       callback(undefined);
       return;
     }
@@ -393,7 +408,7 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   /* ── Decoration layer ────────────────────────────────────────────────────── */
 
   private _scheduleDecoRefresh(): void {
-    if (this._matchers.length === 0) return;
+    if (this._suspended || this._matchers.length === 0) return;
     if (this._decoTimer) clearTimeout(this._decoTimer);
     this._decoTimer = setTimeout(() => {
       this._decoTimer = null;

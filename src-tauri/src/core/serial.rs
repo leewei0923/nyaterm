@@ -3,6 +3,7 @@
 use super::session::{
     SessionCommand, SessionHandle, SessionInfo, SessionManager, SessionType, SharedCwd,
 };
+use crate::core::SessionOutputCoalescer;
 use crate::error::{AppError, AppResult};
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::io::{Read, Write};
@@ -130,12 +131,13 @@ fn serial_session_thread(
     let port = Arc::new(Mutex::new(port));
     let output_event = format!("terminal-output-{}", session_id);
     let closed_event = format!("session-closed-{}", session_id);
+    let output = SessionOutputCoalescer::for_app(app.clone(), output_event.clone());
 
     // Reader thread
     let app_reader = app.clone();
     let sid_reader = session_id.clone();
-    let output_event_reader = output_event.clone();
     let port_reader = port.clone();
+    let output_reader = output.clone();
 
     let reader_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let reader_flag = reader_running.clone();
@@ -151,7 +153,7 @@ fn serial_session_thread(
                 Ok(0) => break,
                 Ok(n) => {
                     let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_reader.emit(&output_event_reader, &text);
+                    output_reader.push_owned(text);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     continue;
@@ -162,13 +164,16 @@ fn serial_session_thread(
                 }
             }
         }
+        output_reader.close();
         let _ = app_reader.emit(&format!("session-closed-{}", sid_reader), ());
     });
 
     // Command loop
     while let Some(cmd) = cmd_rx.blocking_recv() {
         match cmd {
-            SessionCommand::Attach => {}
+            SessionCommand::Attach => {
+                output.attach();
+            }
             SessionCommand::Write(data) => {
                 let mut p = port.lock().unwrap();
                 let _ = p.write_all(&data);
@@ -182,6 +187,7 @@ fn serial_session_thread(
     }
 
     reader_running.store(false, std::sync::atomic::Ordering::Relaxed);
+    output.close();
 
     rt_handle.block_on(async {
         manager.remove_session(&session_id).await;

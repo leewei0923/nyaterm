@@ -17,6 +17,7 @@ import { useTerminalSearch } from "@/hooks/useTerminalSearch";
 import { useTerminalSettings } from "@/hooks/useTerminalSettings";
 import { readClipboardText } from "@/lib/clipboard";
 import { hexLuminance } from "@/lib/keywordHighlightPresets";
+import { XTERM_PERFORMANCE_CONFIG } from "@/lib/xtermPerformance";
 import ActionLinkMenu from "./ActionLinkMenu";
 import ActionLinkTooltip from "./ActionLinkTooltip";
 import CommandSuggestions from "./CommandSuggestions";
@@ -33,6 +34,9 @@ interface XTerminalProps {
   onReconnected?: (oldSessionId: string, newSessionId: string) => void;
 }
 
+type PerformanceMode = "normal" | "overloaded";
+type PerformanceOverlayState = "overloaded" | "recovered" | null;
+
 /**
  * xterm.js terminal for a session. Handles OSC 133 shell integration (or fallback prompt
  * detection), fuzzy command history suggestions, and resize/fit. Key props: sessionId, active.
@@ -48,6 +52,9 @@ export default function XTerminal({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
+  const [performanceMode, setPerformanceMode] = useState<PerformanceMode>("normal");
+  const [performanceOverlay, setPerformanceOverlay] = useState<PerformanceOverlayState>(null);
+  const [skippedOutputChars, setSkippedOutputChars] = useState(0);
 
   const { terminalTheme } = useTheme();
   const { t } = useTranslation();
@@ -65,13 +72,19 @@ export default function XTerminal({
   const disconnectedRef = useRef(false);
   const reconnectingRef = useRef(false);
   const outputWriteQueueRef = useRef(Promise.resolve());
+  const outputWriteInFlightRef = useRef(false);
   const lineTimestampsRef = useRef<Map<number, number>>(new Map());
   const connectionIdRef = useRef(connectionId);
   const onReconnectedRef = useRef(onReconnected);
   const sessionIdRef = useRef(sessionId);
   const visibleRef = useRef(visible);
-  const pendingOutputRef = useRef("");
+  const performanceModeRef = useRef<PerformanceMode>("normal");
+  const performanceOverlayTimerRef = useRef<number | null>(null);
+  const skippedOutputCharsRef = useRef(0);
+  const queuedOutputChunksRef = useRef<string[]>([]);
+  const queuedOutputCharsRef = useRef(0);
   const pendingOutputFlushRef = useRef<number | null>(null);
+  const handleVisibilityChangeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     connectionIdRef.current = connectionId;
@@ -87,6 +100,7 @@ export default function XTerminal({
 
   useEffect(() => {
     visibleRef.current = visible;
+    handleVisibilityChangeRef.current?.();
   }, [visible]);
 
   useEffect(() => {
@@ -96,6 +110,36 @@ export default function XTerminal({
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+
+  const clearPerformanceOverlayTimer = useCallback(() => {
+    if (performanceOverlayTimerRef.current !== null) {
+      window.clearTimeout(performanceOverlayTimerRef.current);
+      performanceOverlayTimerRef.current = null;
+    }
+  }, []);
+
+  const enterOverloadedMode = useCallback(() => {
+    clearPerformanceOverlayTimer();
+    performanceModeRef.current = "overloaded";
+    setPerformanceMode("overloaded");
+    setPerformanceOverlay("overloaded");
+  }, [clearPerformanceOverlayTimer]);
+
+  const exitOverloadedMode = useCallback(() => {
+    clearPerformanceOverlayTimer();
+    performanceModeRef.current = "normal";
+    setPerformanceMode("normal");
+    setPerformanceOverlay("recovered");
+    performanceOverlayTimerRef.current = window.setTimeout(() => {
+      setPerformanceOverlay((current) => (current === "recovered" ? null : current));
+      performanceOverlayTimerRef.current = null;
+    }, XTERM_PERFORMANCE_CONFIG.output.recoveryNoticeMs);
+  }, [clearPerformanceOverlayTimer]);
+
+  const formatSkippedCount = useCallback(
+    (value: number) => new Intl.NumberFormat().format(value),
+    [],
+  );
 
   // Search Addon state and handlers
   const {
@@ -141,6 +185,16 @@ export default function XTerminal({
     if (!containerRef.current) return;
     setTerminalReady(false);
     lineTimestampsRef.current = new Map();
+    queuedOutputChunksRef.current = [];
+    queuedOutputCharsRef.current = 0;
+    skippedOutputCharsRef.current = 0;
+    outputWriteInFlightRef.current = false;
+    outputWriteQueueRef.current = Promise.resolve();
+    performanceModeRef.current = "normal";
+    setPerformanceMode("normal");
+    setPerformanceOverlay(null);
+    setSkippedOutputChars(0);
+    clearPerformanceOverlayTimer();
     let disposed = false;
 
     const terminal = new Terminal({
@@ -415,7 +469,10 @@ export default function XTerminal({
       }
 
       const terminalSettings = appSettingsRef.current?.terminal;
-      if (terminalSettings?.show_line_numbers || terminalSettings?.show_timestamps) {
+      if (
+        performanceModeRef.current !== "overloaded" &&
+        (terminalSettings?.show_line_numbers || terminalSettings?.show_timestamps)
+      ) {
         window.dispatchEvent(
           new CustomEvent("dragonfly:refresh-gutter", { detail: { sessionId } }),
         );
@@ -428,6 +485,7 @@ export default function XTerminal({
 
     const refreshGutter = () => {
       if (!isTerminalAlive()) return;
+      if (performanceModeRef.current === "overloaded") return;
       const terminalSettings = appSettingsRef.current?.terminal;
       if (!terminalSettings?.show_line_numbers && !terminalSettings?.show_timestamps) return;
       window.dispatchEvent(new CustomEvent("dragonfly:refresh-gutter", { detail: { sessionId } }));
@@ -453,22 +511,96 @@ export default function XTerminal({
         }
       }
 
-      refreshGutter();
+      if (performanceModeRef.current !== "overloaded") {
+        refreshGutter();
+      }
     };
 
-    const flushPendingOutput = () => {
-      pendingOutputFlushRef.current = null;
-      const payload = pendingOutputRef.current;
-      if (!payload) return;
-      pendingOutputRef.current = "";
-      if (!isTerminalAlive()) return;
+    const getBacklogCap = () =>
+      visibleRef.current
+        ? XTERM_PERFORMANCE_CONFIG.output.visibleBacklogCap
+        : XTERM_PERFORMANCE_CONFIG.output.hiddenBacklogCap;
 
+    const getRecoveryThreshold = () =>
+      visibleRef.current
+        ? XTERM_PERFORMANCE_CONFIG.output.visibleRecoveryThreshold
+        : XTERM_PERFORMANCE_CONFIG.output.hiddenRecoveryThreshold;
+
+    const noteSkippedOutput = (count: number) => {
+      if (count <= 0) return;
+      skippedOutputCharsRef.current += count;
+      setSkippedOutputChars(skippedOutputCharsRef.current);
+      enterOverloadedMode();
+    };
+
+    const trimQueuedOutput = (maxChars: number) => {
+      let dropped = 0;
+
+      while (queuedOutputCharsRef.current > maxChars && queuedOutputChunksRef.current.length > 0) {
+        const overflow = queuedOutputCharsRef.current - maxChars;
+        const chunk = queuedOutputChunksRef.current[0];
+        if (!chunk) break;
+
+        if (chunk.length <= overflow) {
+          queuedOutputChunksRef.current.shift();
+          queuedOutputCharsRef.current -= chunk.length;
+          dropped += chunk.length;
+          continue;
+        }
+
+        queuedOutputChunksRef.current[0] = chunk.slice(overflow);
+        queuedOutputCharsRef.current -= overflow;
+        dropped += overflow;
+      }
+
+      return dropped;
+    };
+
+    const dequeueOutputChunk = (maxChars: number) => {
+      if (maxChars <= 0 || queuedOutputChunksRef.current.length === 0) {
+        return "";
+      }
+
+      let remaining = maxChars;
+      const parts: string[] = [];
+
+      while (remaining > 0 && queuedOutputChunksRef.current.length > 0) {
+        const chunk = queuedOutputChunksRef.current[0];
+        if (!chunk) break;
+
+        if (chunk.length <= remaining) {
+          parts.push(chunk);
+          queuedOutputChunksRef.current.shift();
+          queuedOutputCharsRef.current -= chunk.length;
+          remaining -= chunk.length;
+          continue;
+        }
+
+        parts.push(chunk.slice(0, remaining));
+        queuedOutputChunksRef.current[0] = chunk.slice(remaining);
+        queuedOutputCharsRef.current -= remaining;
+        remaining = 0;
+      }
+
+      return parts.join("");
+    };
+
+    const maybeRecoverPerformanceMode = () => {
+      if (!isTerminalAlive()) return;
+      if (performanceModeRef.current !== "overloaded") return;
+      if (queuedOutputCharsRef.current > getRecoveryThreshold()) return;
+      exitOverloadedMode();
+    };
+
+    const writeChunkToTerminal = (payload: string) => {
+      outputWriteInFlightRef.current = true;
       outputWriteQueueRef.current = outputWriteQueueRef.current
         .catch(() => {})
         .then(
           () =>
             new Promise<void>((resolve) => {
               if (!isTerminalAlive()) {
+                outputWriteInFlightRef.current = false;
                 resolve();
                 return;
               }
@@ -478,6 +610,8 @@ export default function XTerminal({
 
               try {
                 terminal.write(payload, () => {
+                  outputWriteInFlightRef.current = false;
+
                   if (!isTerminalAlive()) {
                     resolve();
                     return;
@@ -496,39 +630,89 @@ export default function XTerminal({
                     dismissSuggestions();
                   }
 
-                  if (!visibleRef.current) {
-                    window.dispatchEvent(
-                      new CustomEvent("dragonfly:session-output", { detail: { sessionId } }),
-                    );
-                  }
-
+                  maybeRecoverPerformanceMode();
                   resolve();
 
                   if (
+                    visibleRef.current &&
                     isTerminalAlive() &&
-                    pendingOutputRef.current &&
+                    queuedOutputCharsRef.current > 0 &&
                     pendingOutputFlushRef.current === null
                   ) {
                     pendingOutputFlushRef.current = requestAnimationFrame(flushPendingOutput);
                   }
                 });
               } catch {
+                outputWriteInFlightRef.current = false;
+                maybeRecoverPerformanceMode();
                 resolve();
               }
             }),
         );
     };
 
+    const flushPendingOutput = () => {
+      pendingOutputFlushRef.current = null;
+      if (!visibleRef.current || !isTerminalAlive() || outputWriteInFlightRef.current) {
+        return;
+      }
+
+      const deadline = performance.now() + XTERM_PERFORMANCE_CONFIG.output.frameBudgetMs;
+      let payload = "";
+      while (!payload && performance.now() < deadline) {
+        payload = dequeueOutputChunk(XTERM_PERFORMANCE_CONFIG.output.writeChunkChars);
+        if (!payload) break;
+      }
+
+      if (!payload) {
+        maybeRecoverPerformanceMode();
+        return;
+      }
+
+      writeChunkToTerminal(payload);
+    };
+
     const schedulePendingOutputFlush = () => {
-      if (!isTerminalAlive()) return;
-      if (pendingOutputFlushRef.current !== null) return;
+      if (!visibleRef.current || !isTerminalAlive()) return;
+      if (outputWriteInFlightRef.current || pendingOutputFlushRef.current !== null) return;
       pendingOutputFlushRef.current = requestAnimationFrame(flushPendingOutput);
     };
+
+    const applyVisibilityPolicy = () => {
+      if (!isTerminalAlive()) return;
+
+      if (!visibleRef.current && pendingOutputFlushRef.current !== null) {
+        cancelAnimationFrame(pendingOutputFlushRef.current);
+        pendingOutputFlushRef.current = null;
+      }
+
+      const dropped = trimQueuedOutput(getBacklogCap());
+      noteSkippedOutput(dropped);
+      maybeRecoverPerformanceMode();
+
+      if (visibleRef.current) {
+        schedulePendingOutputFlush();
+      }
+    };
+
+    handleVisibilityChangeRef.current = applyVisibilityPolicy;
 
     const setupListeners = async () => {
       const nextOutputUnlisten = await listen<string>(`terminal-output-${sessionId}`, (event) => {
         if (!isTerminalAlive()) return;
-        pendingOutputRef.current += event.payload;
+        queuedOutputChunksRef.current.push(event.payload);
+        queuedOutputCharsRef.current += event.payload.length;
+
+        const dropped = trimQueuedOutput(getBacklogCap());
+        noteSkippedOutput(dropped);
+
+        if (!visibleRef.current) {
+          window.dispatchEvent(
+            new CustomEvent("dragonfly:session-output", { detail: { sessionId } }),
+          );
+          return;
+        }
+
         schedulePendingOutputFlush();
       });
       if (disposed) {
@@ -762,6 +946,7 @@ export default function XTerminal({
 
     return () => {
       disposed = true;
+      handleVisibilityChangeRef.current = null;
       setTerminalReady(false);
       containerEl.removeEventListener("mousedown", handleMiddleMouseDown);
       containerEl.removeEventListener("mouseup", handleMiddleClick);
@@ -789,7 +974,11 @@ export default function XTerminal({
         cancelAnimationFrame(pendingOutputFlushRef.current);
         pendingOutputFlushRef.current = null;
       }
-      pendingOutputRef.current = "";
+      clearPerformanceOverlayTimer();
+      queuedOutputChunksRef.current = [];
+      queuedOutputCharsRef.current = 0;
+      skippedOutputCharsRef.current = 0;
+      outputWriteInFlightRef.current = false;
       outputWriteQueueRef.current = Promise.resolve();
       terminal.dispose();
       terminalRef.current = null;
@@ -807,13 +996,20 @@ export default function XTerminal({
   // isDark is derived from the terminal theme background so built-in rule colors
   // switch automatically when the user changes themes.
   const isDark = hexLuminance(terminalTheme.colors.terminal.background) < 0.5;
-  useKeywordHighlighter(terminalRef, appSettings, sessionId, isDark);
+  useKeywordHighlighter(
+    terminalRef,
+    appSettings,
+    sessionId,
+    isDark,
+    performanceMode === "overloaded",
+  );
 
   const { tooltipState, menuState, closeMenu } = useActionLinks(
     terminalRef,
     appSettings,
     sessionId,
     sendInputRef,
+    performanceMode === "overloaded",
   );
 
   useEffect(() => {
@@ -821,14 +1017,14 @@ export default function XTerminal({
       requestAnimationFrame(() => {
         fitAddonRef.current?.fit();
         terminalRef.current?.refresh(0, Math.max(0, terminalRef.current.rows - 1));
-        if (showGutter) {
+        if (showGutter && performanceMode !== "overloaded") {
           window.dispatchEvent(
             new CustomEvent("dragonfly:refresh-gutter", { detail: { sessionId } }),
           );
         }
       });
     }
-  }, [sessionId, showGutter, terminalReady]);
+  }, [performanceMode, sessionId, showGutter, terminalReady]);
 
   // Re-fit and focus when tab becomes active
   useEffect(() => {
@@ -885,12 +1081,43 @@ export default function XTerminal({
           showTimestamps={showTimestamps}
           lineTimestamps={lineTimestampsRef.current}
           sessionId={sessionId}
+          suspended={performanceMode === "overloaded"}
         />
       )}
       <div className="flex-1 min-w-0 h-full relative">
         <TerminalContextMenu terminalRef={terminalRef} onFind={doFind}>
           <div ref={containerRef} className="h-full w-full" />
         </TerminalContextMenu>
+
+        {performanceOverlay && (
+          <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-end">
+            <div
+              className="max-w-sm rounded-md border px-3 py-2 text-xs shadow-lg"
+              style={{
+                borderColor: "var(--df-border)",
+                backgroundColor: "var(--df-bg-panel)",
+                color: "var(--df-text)",
+              }}
+            >
+              <div className="font-medium">
+                {performanceOverlay === "overloaded"
+                  ? t("terminal.largeOutputProtectionActive")
+                  : t("terminal.largeOutputProtectionRecovered")}
+              </div>
+              <div
+                className="mt-1 leading-5"
+                style={{ color: "var(--df-text-dimmed)" }}
+              >
+                {t(
+                  performanceOverlay === "overloaded"
+                    ? "terminal.largeOutputProtectionActiveDetail"
+                    : "terminal.largeOutputProtectionRecoveredDetail",
+                  { skipped: formatSkippedCount(skippedOutputChars) },
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <TerminalSearchBar
           show={showSearchBar}

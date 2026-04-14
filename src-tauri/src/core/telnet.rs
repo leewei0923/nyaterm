@@ -3,6 +3,7 @@
 use super::session::{
     SessionCommand, SessionHandle, SessionInfo, SessionManager, SessionType, SharedCwd,
 };
+use crate::core::SessionOutputCoalescer;
 use crate::error::AppResult;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -171,10 +172,11 @@ async fn telnet_session_task(
     let (mut reader, mut writer) = stream.into_split();
     let output_event = format!("terminal-output-{}", session_id);
     let closed_event = format!("session-closed-{}", session_id);
+    let output = SessionOutputCoalescer::for_app(app.clone(), output_event.clone());
 
     let app_reader = app.clone();
     let sid_reader = session_id.clone();
-    let output_event_reader = output_event.clone();
+    let output_reader = output.clone();
 
     // Shared channel for negotiation responses from the reader to the writer
     let (negotiate_tx, mut negotiate_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -194,7 +196,7 @@ async fn telnet_session_task(
                     });
                     if !visible.is_empty() {
                         let text = String::from_utf8_lossy(&visible).to_string();
-                        let _ = app_reader.emit(&output_event_reader, &text);
+                        output_reader.push_owned(text);
                     }
                 }
                 Err(e) => {
@@ -203,11 +205,9 @@ async fn telnet_session_task(
                 }
             }
         }
+        output_reader.close();
         let _ = app_reader.emit(&format!("session-closed-{}", sid_reader), ());
     });
-
-    let mut attached = false;
-    let mut pending_output: Vec<String> = Vec::new();
 
     loop {
         tokio::select! {
@@ -220,10 +220,7 @@ async fn telnet_session_task(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SessionCommand::Attach) => {
-                        attached = true;
-                        for text in pending_output.drain(..) {
-                            let _ = app.emit(&output_event, &text);
-                        }
+                        output.attach();
                     }
                     Some(SessionCommand::Write(data)) => {
                         if let Err(e) = writer.write_all(&data).await {
@@ -243,9 +240,7 @@ async fn telnet_session_task(
         }
     }
 
-    let _ = attached; // suppress warning
-    let _ = pending_output;
-
+    output.close();
     reader_handle.abort();
     manager.remove_session(&session_id).await;
     let _ = app.emit(&closed_event, ());

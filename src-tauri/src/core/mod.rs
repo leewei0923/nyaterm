@@ -5,6 +5,7 @@
 
 pub mod history;
 pub mod importer;
+mod output;
 mod pty;
 mod recording;
 pub mod serial;
@@ -15,6 +16,7 @@ pub mod telnet;
 pub mod translate;
 pub mod watcher;
 
+pub(crate) use output::SessionOutputCoalescer;
 pub use pty::{create_local_session, LocalSessionConfig};
 pub use recording::RecordingManager;
 pub use serial::{create_serial_session, list_serial_ports, SerialConfig};

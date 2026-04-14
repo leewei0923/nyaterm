@@ -1,7 +1,8 @@
 use super::client::{SshHandle, SshHandler};
 use crate::core::ssh::osc::{self, OscStripper, ShellKind};
 use crate::core::{
-    update_cwd_if_changed, RecordingManager, SessionCommand, SessionManager, SharedCwd,
+    update_cwd_if_changed, RecordingManager, SessionCommand, SessionManager,
+    SessionOutputCoalescer, SharedCwd,
 };
 use crate::error::{AppError, AppResult};
 use russh::{client, ChannelMsg};
@@ -147,9 +148,7 @@ pub(super) async fn ssh_io_loop(
     let recording_mgr: Option<Arc<RecordingManager>> = app
         .try_state::<Arc<RecordingManager>>()
         .map(|state| state.inner().clone());
-
-    let mut attached = false;
-    let mut buffer: Vec<String> = Vec::new();
+    let output = SessionOutputCoalescer::for_app(app.clone(), output_event.clone());
     let mut stripper = OscStripper::new(&ready_marker);
 
     let mut phase = if injection_script.is_some() {
@@ -169,10 +168,7 @@ pub(super) async fn ssh_io_loop(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SessionCommand::Attach) => {
-                        attached = true;
-                        for text in buffer.drain(..) {
-                            let _ = app.emit(&output_event, &text);
-                        }
+                        output.attach();
                     }
                     Some(SessionCommand::Write(data)) => {
                         if let Some(ref recorder) = recording_mgr {
@@ -200,9 +196,9 @@ pub(super) async fn ssh_io_loop(
                                 // First output from the shell — emit it so the
                                 // user sees the banner / MOTD, then inject.
                                 emit_output(
-                                    &app, &output_event, &cwd_event, &cwd,
+                                    &app, &output, &cwd_event, &cwd,
                                     &recording_mgr, &session_id,
-                                    &result, attached, &mut buffer,
+                                    &result,
                                 ).await;
 
                                 if let Some(script) = pending_script.take() {
@@ -228,9 +224,9 @@ pub(super) async fn ssh_io_loop(
                             }
                             IoPhase::Normal => {
                                 emit_output(
-                                    &app, &output_event, &cwd_event, &cwd,
+                                    &app, &output, &cwd_event, &cwd,
                                     &recording_mgr, &session_id,
-                                    &result, attached, &mut buffer,
+                                    &result,
                                 ).await;
                             }
                         }
@@ -240,11 +236,7 @@ pub(super) async fn ssh_io_loop(
                         if let Some(ref recorder) = recording_mgr {
                             recorder.write_output(&session_id, &text);
                         }
-                        if attached {
-                            let _ = app.emit(&output_event, &text);
-                        } else {
-                            buffer.push(text);
-                        }
+                        output.push_owned(text);
                     }
                     Some(ChannelMsg::Eof) | None => break,
                     _ => {}
@@ -262,15 +254,13 @@ pub(super) async fn ssh_io_loop(
                     if let Some(ref recorder) = recording_mgr {
                         recorder.write_output(&session_id, &flushed);
                     }
-                    if attached {
-                        let _ = app.emit(&output_event, &flushed);
-                    } else {
-                        buffer.push(flushed);
-                    }
+                    output.push_owned(flushed);
                 }
             }
         }
     }
+
+    output.close();
 
     if let Some(ref recorder) = recording_mgr {
         recorder.cleanup_session(&session_id);
@@ -293,14 +283,12 @@ pub(super) async fn ssh_io_loop(
 /// Helper: emit visible text + CWD updates from an [`OscResult`].
 async fn emit_output(
     app: &AppHandle,
-    output_event: &str,
+    output: &Arc<SessionOutputCoalescer>,
     cwd_event: &str,
     cwd: &SharedCwd,
     recording_mgr: &Option<Arc<RecordingManager>>,
     session_id: &str,
     result: &osc::OscResult,
-    attached: bool,
-    buffer: &mut Vec<String>,
 ) {
     for path in &result.cwd_paths {
         if let Some(next_cwd) = update_cwd_if_changed(cwd, path).await {
@@ -316,9 +304,5 @@ async fn emit_output(
         recorder.write_output(session_id, &result.visible);
     }
 
-    if attached {
-        let _ = app.emit(output_event, &result.visible);
-    } else {
-        buffer.push(result.visible.clone());
-    }
+    output.push(&result.visible);
 }

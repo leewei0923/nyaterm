@@ -49,6 +49,7 @@ export function useActionLinks(
   appSettings: AppSettings,
   sessionId: string,
   sendInputRef: React.RefObject<((data: string) => void) | null>,
+  suspended = false,
 ): UseActionLinksResult {
   const addonRef = useRef<ActionLinksAddon | null>(null);
   const [tooltipState, setTooltipState] = useState<TooltipState | null>(null);
@@ -71,6 +72,14 @@ export function useActionLinks(
 
   // Create and load addon once per terminal session
   useEffect(() => {
+    if (!enabled) {
+      addonRef.current?.dispose();
+      addonRef.current = null;
+      setTooltipState(null);
+      setMenuState(null);
+      return;
+    }
+
     const term = terminalRef.current;
     if (!term) return;
 
@@ -88,7 +97,8 @@ export function useActionLinks(
       },
     };
 
-    const addon = new ActionLinksAddon(enabled ? matchers : [], options);
+    const addon = new ActionLinksAddon(matchers, options);
+    addon.setSuspended(suspended);
     term.loadAddon(addon);
     addonRef.current = addon;
 
@@ -99,18 +109,21 @@ export function useActionLinks(
       setMenuState(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, enabled]);
 
   // Sync matchers and enabled state when settings change
   useEffect(() => {
     const addon = addonRef.current;
     if (!addon) return;
-    addon.setMatchers(enabled ? matchers : []);
-    if (!enabled || matchers.length === 0) {
+    addon.setSuspended(suspended);
+    if (!suspended) {
+      addon.setMatchers(matchers);
+    }
+    if (suspended || matchers.length === 0) {
       setTooltipState(null);
       setMenuState(null);
     }
-  }, [enabled, matchers]);
+  }, [matchers, suspended]);
 
   return { tooltipState, menuState, closeMenu, closeTooltip };
 }

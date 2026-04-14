@@ -53,6 +53,7 @@ export class KeywordHighlighter implements IDisposable {
   private scannedLines = new Set<number>();
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private enabled = false;
+  private suspended = false;
   private highlightAcrossWrappedLines = false;
   private disposables: IDisposable[] = [];
   private lastViewportY = -1;
@@ -122,6 +123,21 @@ export class KeywordHighlighter implements IDisposable {
     }
   }
 
+  public setSuspended(suspended: boolean): void {
+    if (this.suspended === suspended) return;
+    this.suspended = suspended;
+
+    if (suspended) {
+      this.clearAllDecorations();
+      return;
+    }
+
+    if (this.enabled && this.compiledRules.length > 0) {
+      this.lastViewportY = -1;
+      this.triggerRefresh();
+    }
+  }
+
   public dispose(): void {
     this.clearAllDecorations();
     this.disposables.forEach((d) => d.dispose());
@@ -159,7 +175,7 @@ export class KeywordHighlighter implements IDisposable {
   }
 
   private triggerRefresh(): void {
-    if (!this.enabled || this.compiledRules.length === 0) return;
+    if (!this.enabled || this.suspended || this.compiledRules.length === 0) return;
 
     if (this.term.buffer.active.type === "alternate") {
       this.clearAllDecorations();

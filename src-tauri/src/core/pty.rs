@@ -7,18 +7,14 @@ use super::session::{
     SessionCommand, SessionHandle, SessionInfo, SessionManager, SessionType, SharedCwd,
 };
 use super::update_cwd_if_changed;
+use crate::core::SessionOutputCoalescer;
 use crate::core::ssh::osc::OscStripper;
 use crate::error::AppResult;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
-
-struct OutputBuffer {
-    attached: bool,
-    buffer: Vec<String>,
-}
 
 /// Per-connection local terminal config.
 pub struct LocalSessionConfig {
@@ -58,37 +54,6 @@ fn platform_default_shell() -> (CommandBuilder, String) {
 fn write_to_pty(writer: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
     writer.write_all(data)?;
     writer.flush()
-}
-
-fn queue_or_emit_output(
-    app: &AppHandle,
-    output_event: &str,
-    output_buf: &Arc<Mutex<OutputBuffer>>,
-    text: String,
-    recording_mgr: Option<&Arc<RecordingManager>>,
-    session_id: &str,
-) {
-    if text.is_empty() {
-        return;
-    }
-
-    if let Some(rec) = recording_mgr {
-        rec.write_output(session_id, &text);
-    }
-
-    let emit_now = {
-        let mut ob = output_buf.lock().unwrap();
-        if ob.attached {
-            true
-        } else {
-            ob.buffer.push(text.clone());
-            false
-        }
-    };
-
-    if emit_now {
-        let _ = app.emit(output_event, &text);
-    }
 }
 
 /// Spawns a local shell in a PTY and registers the session with the manager.
@@ -205,22 +170,18 @@ fn pty_session_thread(
     };
     let master = pair.master;
 
-    let output_buf = Arc::new(Mutex::new(OutputBuffer {
-        attached: false,
-        buffer: Vec::new(),
-    }));
+    let output_event = format!("terminal-output-{}", session_id);
+    let output = SessionOutputCoalescer::for_app(app.clone(), output_event.clone());
 
     let app_read = app.clone();
     let sid_read = session_id.clone();
-    let output_event = format!("terminal-output-{}", session_id);
-    let buf_reader = output_buf.clone();
-
     let cwd_event = format!("cwd-changed-{}", session_id);
     let rt_for_reader = rt_handle.clone();
     let recording_mgr_reader: Option<Arc<RecordingManager>> = app
         .try_state::<Arc<RecordingManager>>()
         .map(|s| s.inner().clone());
     let sid_for_rec_reader = session_id.clone();
+    let output_reader = output.clone();
     std::thread::spawn(move || {
         let mut raw_buf = [0u8; 4096];
         let mut stripper = OscStripper::new("");
@@ -241,14 +202,12 @@ fn pty_session_thread(
                         }
                     }
 
-                    queue_or_emit_output(
-                        &app_read,
-                        &output_event,
-                        &buf_reader,
-                        result.visible,
-                        recording_mgr_reader.as_ref(),
-                        &sid_for_rec_reader,
-                    );
+                    if !result.visible.is_empty() {
+                        if let Some(rec) = recording_mgr_reader.as_ref() {
+                            rec.write_output(&sid_for_rec_reader, &result.visible);
+                        }
+                        output_reader.push_owned(result.visible);
+                    }
                 }
                 Err(error) => {
                     tracing::debug!(
@@ -260,24 +219,17 @@ fn pty_session_thread(
                 }
             }
         }
+        output_reader.close();
         let _ = app_read.emit(&format!("session-closed-{}", sid_read), ());
     });
 
     let recording_mgr: Option<Arc<RecordingManager>> = app
         .try_state::<Arc<RecordingManager>>()
         .map(|s| s.inner().clone());
-    let output_event_cmd = format!("terminal-output-{}", session_id);
     while let Some(cmd) = cmd_rx.blocking_recv() {
         match cmd {
             SessionCommand::Attach => {
-                let buffered = {
-                    let mut ob = output_buf.lock().unwrap();
-                    ob.attached = true;
-                    ob.buffer.drain(..).collect::<Vec<_>>()
-                };
-                for text in buffered {
-                    let _ = app.emit(&output_event_cmd, &text);
-                }
+                output.attach();
             }
             SessionCommand::Write(data) => {
                 if let Some(ref rec) = recording_mgr {
@@ -304,6 +256,8 @@ fn pty_session_thread(
             }
         }
     }
+
+    output.close();
 
     if let Some(ref rec) = recording_mgr {
         rec.cleanup_session(&session_id);
