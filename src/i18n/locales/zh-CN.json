@@ -807,6 +807,7 @@
     "actionLinkKind_ip": "IPv4",
     "actionLinkKind_url": "URL",
     "click": "单击",
+    "connectionFailed": "连接失败",
     "linkOpenHint": "按住 {{modifier}} 并点击以打开链接",
     "newConnection": "新建连接",
     "pressEnterToReconnect": "按回车键重新连接",
