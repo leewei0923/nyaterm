@@ -46,6 +46,11 @@ async fn create_authenticated_connection(
             &jump_key_error,
         )
         .await?;
+        tracing::info!(
+            jump_host = %jump_config.host,
+            jump_port = jump_config.port,
+            "ProxyJump host authenticated"
+        );
 
         let channel = jump_handle
             .channel_open_direct_tcpip(&config.host, config.port.into(), "127.0.0.1", 0)
@@ -53,6 +58,13 @@ async fn create_authenticated_connection(
             .map_err(|error| {
                 AppError::Channel(format!("Failed to open ProxyJump channel: {}", error))
             })?;
+        tracing::info!(
+            jump_host = %jump_config.host,
+            jump_port = jump_config.port,
+            target_host = %config.host,
+            target_port = config.port,
+            "ProxyJump direct-tcpip channel opened"
+        );
 
         let target_handler = SshHandler::new(app.clone(), config.host.clone(), config.port);
         let mut target_handle =
@@ -65,6 +77,11 @@ async fn create_authenticated_connection(
             "Authentication failed: key rejected",
         )
         .await?;
+        tracing::info!(
+            host = %config.host,
+            port = config.port,
+            "Target host authenticated via ProxyJump"
+        );
 
         let target_handle: SshRawHandle = Arc::new(tokio::sync::Mutex::new(target_handle));
         let jump_handle: SshRawHandle = Arc::new(tokio::sync::Mutex::new(jump_handle));
@@ -84,6 +101,11 @@ async fn create_authenticated_connection(
         "Authentication failed: key rejected",
     )
     .await?;
+    tracing::info!(
+        host = %config.host,
+        port = config.port,
+        "Target host authenticated"
+    );
 
     let handle: SshRawHandle = Arc::new(tokio::sync::Mutex::new(handle));
     Ok(Arc::new(SshConnectionHandles::new(handle, None)))

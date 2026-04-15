@@ -157,11 +157,13 @@ pub(super) async fn ssh_io_loop(
         IoPhase::Normal
     };
     let mut pending_script = injection_script;
+    let mut remote_exit_status: Option<u32> = None;
+    let mut remote_exit_signal: Option<String> = None;
 
     let inject_deadline = tokio::time::sleep(std::time::Duration::from_secs(INJECT_TIMEOUT_SECS));
     tokio::pin!(inject_deadline);
 
-    loop {
+    let close_reason = loop {
         tokio::select! {
             biased;
 
@@ -179,9 +181,13 @@ pub(super) async fn ssh_io_loop(
                     Some(SessionCommand::Resize { cols, rows }) => {
                         let _ = channel.window_change(cols, rows, 0, 0).await;
                     }
-                    Some(SessionCommand::Close) | None => {
+                    Some(SessionCommand::Close) => {
                         let _ = channel.close().await;
-                        break;
+                        break "local-close-request";
+                    }
+                    None => {
+                        let _ = channel.close().await;
+                        break "session-command-channel-closed";
                     }
                 }
             }
@@ -238,7 +244,51 @@ pub(super) async fn ssh_io_loop(
                         }
                         output.push_owned(text);
                     }
-                    Some(ChannelMsg::Eof) | None => break,
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        remote_exit_status = Some(exit_status);
+                        tracing::info!(
+                            session_id = %session_id,
+                            exit_status,
+                            "SSH remote process reported exit status"
+                        );
+                    }
+                    Some(ChannelMsg::ExitSignal {
+                        signal_name,
+                        core_dumped,
+                        error_message,
+                        lang_tag,
+                    }) => {
+                        remote_exit_signal = Some(format!("{signal_name:?}"));
+                        tracing::warn!(
+                            session_id = %session_id,
+                            signal = ?signal_name,
+                            core_dumped,
+                            error_message = %error_message,
+                            lang_tag = %lang_tag,
+                            "SSH remote process exited on signal"
+                        );
+                    }
+                    Some(ChannelMsg::Eof) => {
+                        tracing::info!(
+                            session_id = %session_id,
+                            "SSH channel received EOF from remote"
+                        );
+                        break "remote-channel-eof";
+                    }
+                    Some(ChannelMsg::Close) => {
+                        tracing::info!(
+                            session_id = %session_id,
+                            "SSH channel received close from remote"
+                        );
+                        break "remote-channel-close";
+                    }
+                    None => {
+                        tracing::info!(
+                            session_id = %session_id,
+                            "SSH channel stream ended"
+                        );
+                        break "channel-stream-ended";
+                    }
                     _ => {}
                 }
             }
@@ -258,7 +308,7 @@ pub(super) async fn ssh_io_loop(
                 }
             }
         }
-    }
+    };
 
     output.close();
 
@@ -276,7 +326,13 @@ pub(super) async fn ssh_io_loop(
         }
     }
 
-    tracing::info!(session_id = %session_id, "SSH session closed");
+    tracing::info!(
+        session_id = %session_id,
+        close_reason,
+        remote_exit_status,
+        remote_exit_signal = remote_exit_signal.as_deref(),
+        "SSH session closed"
+    );
     let _ = app.emit(&closed_event, ());
 }
 
