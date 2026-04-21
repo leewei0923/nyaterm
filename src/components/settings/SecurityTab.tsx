@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SelectItem } from "@/components/ui/select";
 import { useApp } from "@/context/AppContext";
+import { invoke } from "@/lib/invoke";
 import { NumberInput } from "../ui/number-input";
 import {
   SettingInput,
@@ -13,6 +15,36 @@ import {
 export function SecurityTab() {
   const { t } = useTranslation();
   const { appSettings, updateAppSettings } = useApp();
+  const [masterPasswordValue, setMasterPasswordValue] = useState("");
+
+  useEffect(() => {
+    if (!appSettings.security.master_password) {
+      setMasterPasswordValue("");
+      return;
+    }
+
+    if (appSettings.security.master_password !== "__SET__") {
+      setMasterPasswordValue(appSettings.security.master_password);
+      return;
+    }
+
+    let cancelled = false;
+    invoke<string | null>("get_master_password_value")
+      .then((value) => {
+        if (!cancelled) {
+          setMasterPasswordValue(value ?? "");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMasterPasswordValue("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appSettings.security.master_password]);
 
   return (
     <div className="space-y-5">
@@ -22,18 +54,11 @@ export function SecurityTab() {
           desc={t("settings.masterPasswordDesc")}
           type="password"
           controlClassName="max-w-lg"
-          placeholder={
-            appSettings.security.master_password === "__SET__"
-              ? "••••••••"
-              : t("settings.masterPasswordPlaceholder")
-          }
-          value={
-            appSettings.security.master_password === "__SET__"
-              ? ""
-              : appSettings.security.master_password || ""
-          }
+          placeholder={t("settings.masterPasswordPlaceholder")}
+          value={masterPasswordValue}
           onChange={(e) => {
             const val = e.target.value;
+            setMasterPasswordValue(val);
             updateAppSettings({
               security: { ...appSettings.security, master_password: val || undefined },
             });

@@ -134,6 +134,7 @@ export function SettingNumberInput({
   desc,
   value,
   onChange,
+  disabled,
   min,
   max,
   step,
@@ -145,6 +146,7 @@ export function SettingNumberInput({
   desc?: string;
   value: number;
   onChange: (v: number) => void;
+  disabled?: boolean;
   min?: number;
   max?: number;
   step?: number;
@@ -162,6 +164,7 @@ export function SettingNumberInput({
       <NumberInput
         value={value}
         onChange={onChange}
+        disabled={disabled}
         min={min}
         max={max}
         step={step}
@@ -176,6 +179,7 @@ export function SettingSelect({
   desc,
   value,
   onValueChange,
+  disabled,
   children,
   fieldClassName,
   controlClassName,
@@ -185,6 +189,7 @@ export function SettingSelect({
   desc?: string;
   value: string;
   onValueChange: (v: string) => void;
+  disabled?: boolean;
   children: React.ReactNode;
   fieldClassName?: string;
   controlClassName?: string;
@@ -197,7 +202,7 @@ export function SettingSelect({
       className={fieldClassName}
       controlClassName={controlClassName}
     >
-      <Select value={value} onValueChange={onValueChange}>
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
         <SelectTrigger className={cn("w-full text-sm", triggerClassName)}>
           <SelectValue />
         </SelectTrigger>

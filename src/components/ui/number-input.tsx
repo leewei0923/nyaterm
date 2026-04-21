@@ -43,7 +43,7 @@ export const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
           variant="outline"
           size="icon"
           onClick={handleDecrement}
-          disabled={value <= min}
+          disabled={props.disabled || value <= min}
           className="rounded-r-none shrink-0 border-r-0 focus-visible:z-10 bg-muted/20"
         >
           <MdRemove className="text-sm" />
@@ -65,7 +65,7 @@ export const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
           variant="outline"
           size="icon"
           onClick={handleIncrement}
-          disabled={value >= max}
+          disabled={props.disabled || value >= max}
           className="rounded-l-none shrink-0 border-l-0 focus-visible:z-10 bg-muted/20"
         >
           <MdAdd className="text-sm" />
