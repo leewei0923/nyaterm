@@ -5,7 +5,7 @@
 
 ## Overview
 
-Dragonfly is a desktop client for SSH-centric operations and mixed terminal workflows. It combines a React + Tauri interface with a Rust backend so you can manage remote hosts, local shells, file transfers, authentication, network tooling, and protected configuration sync / backup workflows from one workspace.
+Dragonfly is a desktop client for SSH-centric operations and mixed terminal workflows. It combines a React + Tauri interface with a Rust backend so you can manage remote hosts, local shells, file transfers, authentication, network tooling, session import / export, diagnostics, and protected configuration sync / backup workflows from one workspace.
 
 ## Highlights
 
@@ -15,15 +15,17 @@ Dragonfly is a desktop client for SSH-centric operations and mixed terminal work
 - Multi-tab workspace with horizontal and vertical pane splits
 - Saved connections with folders, icons, duplication, reconnect, and import tools
 - Child windows for settings, new-session, quick-command, and auto-upload flows
+- Tray support with optional minimize-to-tray behavior on window close
 
 ### Terminal experience
 
 - Search bar, command history, fuzzy suggestions, online search, translation, and context actions
+- Configurable command suggestion history length thresholds for noisy or long commands
 - Optional line numbers and timestamps gutter for dense terminal output
 - Optional action links for IPv4 addresses, `host:port`, and archive filenames
 - Optional keyword highlighting with built-in presets and custom rules
 - Large-output protection under load, configurable scrollback, and SSH keep-alive
-- Session recording and remote resource monitor for active SSH sessions
+- Session recording with configurable save path and remote resource monitor for active SSH sessions
 
 ### Remote operations
 
@@ -39,12 +41,14 @@ Dragonfly is a desktop client for SSH-centric operations and mixed terminal work
 - Screen lock, master password support, and known-hosts management
 - Proxy configs, SSH jump hosts, and local / remote / dynamic tunnels
 
-### Sync and backup
+### Sync, backup, and portability
 
 - Encrypted cloud sync and backup for portable Dragonfly data through WebDAV and S3-compatible storage
-- Master password required before enabling sync, running manual actions, or creating scheduled encrypted backups
+- Master password required before enabling sync, running manual actions, importing / exporting encrypted config backups, or creating scheduled encrypted backups
 - Startup sync checks, debounced auto-push after supported local changes, and scheduled backup retention policies
 - Manual test / push / pull / backup actions, remote backup restore, and snapshot-level conflict resolution
+- Session import from Xshell, MobaXterm, and WindTerm, plus full-app encrypted `.dgfy` import / export
+- Diagnostics bundle export for troubleshooting and support
 - Dedicated **Sync & Backup** settings tab plus an in-workspace activity history panel
 
 ## Supported session types
@@ -87,6 +91,7 @@ If you want to add screenshots later, these are the recommended stable asset pat
 | Terminal | xterm.js |
 | SSH | russh |
 | File transfer | russh-sftp |
+| Storage abstraction | OpenDAL |
 
 ## Getting started
 

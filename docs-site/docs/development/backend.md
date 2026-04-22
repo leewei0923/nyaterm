@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # 后端开发指南
 
-后端代码位于 `src-tauri/src/`，使用 Rust 编写，是 Dragonfly 的运行时核心：会话管理、SSH/SFTP、录制、翻译、隧道、认证、配置持久化都在这里落地。
+后端代码位于 `src-tauri/src/`，使用 Rust 编写，是 Dragonfly 的运行时核心：会话管理、SSH/SFTP、录制、翻译、隧道、认证、同步备份、导入导出与配置持久化都在这里落地。
 
 ## 命令入口与模块组织
 
@@ -14,24 +14,26 @@ sidebar_position: 4
 - 在这里挂载 Tauri plugin
 - 在这里通过 `tauri::generate_handler![]` 注册所有 commands
 
-命令模块位于：
+当前命令模块位于：
 
 ```text
 src-tauri/src/cmd/
-├── session.rs
-├── sftp.rs
-├── connection.rs
-├── settings.rs
-├── watcher.rs
-├── translate.rs
-├── stats.rs
-├── tunnel.rs
-├── proxy.rs
-├── otp.rs
-├── importer.rs
-├── cloud_sync.rs
+├── app.rs
+├── backup.rs
 ├── clipboard.rs
-└── log.rs
+├── cloud_sync.rs
+├── connection.rs
+├── importer.rs
+├── log.rs
+├── otp.rs
+├── proxy.rs
+├── session.rs
+├── settings.rs
+├── sftp.rs
+├── stats.rs
+├── translate.rs
+├── tunnel.rs
+└── watcher.rs
 ```
 
 如果你要新增一个 command，通常需要：
@@ -49,6 +51,7 @@ src-tauri/src/cmd/
 - `TunnelManager`
 - `RecordingManager`
 - `PendingAuthManager`
+- `QuickCommandsStore`
 - `CloudSyncManager`
 
 它们分别负责：
@@ -57,6 +60,7 @@ src-tauri/src/cmd/
 - SSH 隧道状态
 - 录制状态
 - keyboard-interactive / OTP 等待中的认证请求
+- 快捷命令持久化与变更广播
 - 云同步 / 备份状态、远端快照操作与冲突处理
 
 ## SessionManager
@@ -162,6 +166,17 @@ src-tauri/src/cmd/
 - 备份快照和同步快照的范围差异
 
 当前实现里，portable snapshot 会覆盖连接、凭据配置、OTP、代理、隧道、快捷命令和大部分应用设置；但设备本地的运行态 UI 状态不会被无差别漫游。
+
+## 导入、导出与诊断
+
+除了运行时会话能力，后端还负责几类数据管理命令：
+
+- `cmd::importer` — 导入 Xshell / MobaXterm / WindTerm 会话
+- `cmd::backup` — 导出 / 导入 Dragonfly 的加密 `.dgfy` 配置备份
+- `cmd::log` — 收集前端日志并导出诊断包
+- `cmd::app` — 应用级退出等控制命令
+
+如果你修改的是迁移、备份恢复或故障排查工具链，这几组模块通常比 session / ssh 更关键。
 
 ## 配置与加密
 

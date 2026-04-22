@@ -58,15 +58,72 @@ pnpm install
 
 ## 启动开发
 
+### 启动完整桌面应用
+
 ```bash
 pnpm tauri dev
 ```
 
 这将同时启动：
+
 - Vite 开发服务器（端口 1420，HMR 端口 1421）
 - Tauri 应用窗口
 
 修改前端代码会热更新，修改 Rust 代码会自动重新编译。
+
+### 只启动前端
+
+```bash
+pnpm dev
+```
+
+适合只改界面或排查前端布局问题。
+
+### 启动文档站点
+
+```bash
+pnpm --dir docs-site start
+```
+
+如果只想针对某个语言编辑：
+
+```bash
+pnpm --dir docs-site start:zh
+pnpm --dir docs-site start:en
+```
+
+## 常用检查与构建命令
+
+### 前端 / 根项目
+
+| 命令 | 说明 |
+|------|------|
+| `pnpm build` | TypeScript 检查 + Vite 构建 |
+| `pnpm lint` | 运行 Biome 代码检查 |
+| `pnpm format` | 运行 Biome 代码格式化 |
+| `pnpm format:check` | 检查 Biome 格式，不写回 |
+| `pnpm i18n:check` | 检查 locale JSON 格式 |
+| `pnpm i18n:fix` | 修复 locale JSON 格式 |
+| `pnpm version-sync` | 同步各文件中的版本号 |
+| `pnpm release` | 版本同步 + 前端构建 + Tauri 构建 |
+
+### Rust / Tauri 后端
+
+| 命令 | 说明 |
+|------|------|
+| `cargo fmt --manifest-path src-tauri/Cargo.toml` | 格式化 Rust 代码 |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets` | 运行 Rust lint |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 运行后端测试 |
+| `cargo test --manifest-path src-tauri/crates/otp/Cargo.toml` | 运行 OTP crate 测试 |
+
+### 文档站点
+
+| 命令 | 说明 |
+|------|------|
+| `pnpm --dir docs-site start` | 启动文档站点（所有语言） |
+| `pnpm --dir docs-site start:zh` | 启动中文文档开发服务器 |
+| `pnpm --dir docs-site start:en` | 启动英文文档开发服务器 |
+| `pnpm --dir docs-site build` | 构建文档站点 |
 
 ## 构建发布
 
@@ -76,38 +133,31 @@ pnpm tauri build
 
 构建产物位于 `src-tauri/target/release/bundle/`。
 
-## 开发脚本
-
-| 命令 | 说明 |
-|------|------|
-| `pnpm dev` | 仅启动 Vite 开发服务器 |
-| `pnpm build` | TypeScript 检查 + Vite 构建 |
-| `pnpm tauri dev` | 启动 Tauri 开发模式 |
-| `pnpm tauri build` | 构建生产版本 |
-| `pnpm lint` | 运行 Biome 代码检查 |
-| `pnpm format` | 运行 Biome 代码格式化 |
-| `pnpm version-sync` | 同步各文件中的版本号 |
-| `pnpm --dir docs-site start` | 启动文档站点（所有语言） |
-| `pnpm --dir docs-site start:zh` | 启动中文文档开发服务器 |
-| `pnpm --dir docs-site start:en` | 启动英文文档开发服务器 |
-| `pnpm --dir docs-site build` | 构建文档站点 |
-
 ## 文档开发提示
 
-如果你在修改 README 或 `docs-site/docs/` / `docs-site/i18n/en/` 下的文档，建议同时执行文档站点构建，确认：
+如果你在修改 README 或 `docs-site/docs/` / `docs-site/i18n/en/` 下的文档，建议至少执行：
 
-- 中英文两套文档都能通过构建
-- 新增页面已经进入导航
-- 相对链接没有失效
+```bash
+pnpm --dir docs-site build
+```
+
+这样可以尽早发现：
+
+- 中英文文档是否都能通过构建
+- 新增页面是否进入导航
+- 相对链接是否失效
+- Markdown 或 frontmatter 是否有语法问题
 
 ## 代码规范
 
-项目使用 [Biome](https://biomejs.dev/) 进行代码检查和格式化：
+### 前端
 
-```bash
-# 检查代码
-pnpm lint
+- 使用 TypeScript 严格模式
+- 优先复用 `src/components/ui/` 中的共享组件
+- 新增或修改 UI 文本时，同时更新 `src/i18n/locales/zh-CN.json` 和 `src/i18n/locales/en.json`
 
-# 自动格式化
-pnpm format
-```
+### 后端
+
+- 遵循 Rust 标准编码风格
+- 新增 Tauri command 时，同时检查 `src-tauri/src/lib.rs` 的注册项
+- 变更设置或持久化结构时，同时确认前端默认值和 Rust 配置迁移逻辑
