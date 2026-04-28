@@ -1,22 +1,6 @@
 import { type DragEvent, memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  MdAdd,
-  MdAutoAwesome,
-  MdCellTower,
-  MdClose,
-  MdDns,
-  MdErrorOutline,
-  MdTerminal,
-} from "react-icons/md";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { openAIAssistant } from "@/lib/aiEvents";
+import { MdAdd, MdCellTower, MdClose, MdDns, MdErrorOutline, MdTerminal } from "react-icons/md";
 import { getActiveGroupForSession, isSessionPausedInGroup } from "@/lib/syncInputGroups";
 import { getActivePane, getTabDisplayName } from "@/lib/workspaceTabs";
 import type { PaneSplitDirection, Tab } from "@/types/global";
@@ -229,6 +213,7 @@ function TabBar({
               onCloseInactive={onCloseInactive}
               onCloseRight={onCloseRight}
               onSessionInfo={onSessionInfo}
+              onActivateTab={onTabChange}
             >
               <div
                 draggable
@@ -247,6 +232,7 @@ function TabBar({
                   color: isActive ? "var(--df-text)" : "var(--df-text-muted)",
                 }}
                 onClick={() => onTabChange(tab.id)}
+                onContextMenu={() => onTabChange(tab.id)}
                 onDragStart={(event) => handleDragStart(event, tab.id)}
                 onDragEnd={() => {
                   resetDragState();
@@ -325,39 +311,6 @@ function TabBar({
           handleDropAtIndex(tabs.length);
         }}
       >
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="px-3 transition-colors df-hover"
-              style={{ color: "var(--df-text-muted)" }}
-              title={t("ai.title")}
-            >
-              <MdAutoAwesome className="mx-auto text-base" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => openAIAssistant({ action: "explain_output" })}>
-              {t("ai.explainRecent")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openAIAssistant({ action: "generate_command" })}>
-              {t("ai.generateCommand")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openAIAssistant({ action: "analyze_error" })}>
-              {t("ai.analyzeError")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() =>
-                openAIAssistant({
-                  action: "generate_command",
-                  userInput: "生成一组只读巡检命令计划",
-                })
-              }
-            >
-              {t("ai.inspectionPlan")}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
         {draggedTabId && dropIndex === tabs.length && (
           <div
             className="pointer-events-none absolute inset-y-1 left-0 z-20 w-0.5 rounded-full"

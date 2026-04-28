@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  MdAutoAwesome,
   MdClose,
   MdCloseFullscreen,
   MdColorLens,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useApp } from "@/context/AppContext";
+import { openAIAssistant } from "@/lib/aiEvents";
 import { getActivePane, getTabDisplayName } from "@/lib/workspaceTabs";
 import type { PaneSplitDirection, Tab } from "@/types/global";
 import {
@@ -62,6 +64,7 @@ interface TabContextMenuProps {
   onCloseInactive: (keepTabId: string) => void | Promise<void>;
   onCloseRight: (tabId: string) => void | Promise<void>;
   onSessionInfo: (tab: Tab) => void | Promise<void>;
+  onActivateTab: (tabId: string) => void;
 }
 
 export default function TabContextMenu({
@@ -76,6 +79,7 @@ export default function TabContextMenu({
   onCloseInactive,
   onCloseRight,
   onSessionInfo,
+  onActivateTab,
 }: TabContextMenuProps) {
   const { t } = useTranslation();
   const { updateTab } = useApp();
@@ -89,6 +93,7 @@ export default function TabContextMenu({
     !!activePane && (activePane.type === "Local" || !!activePane.connectionId);
   const canReconnect = !!activePane && !activePane.connecting && canSpawnSession;
   const canSplit = canSpawnSession;
+  const canUseAI = !!activePane && !activePane.connecting && !activePane.connectError;
   const canCloseInactive = tabs.length > 1;
   const canCloseRight = tabIndex !== -1 && tabIndex < tabs.length - 1;
   const canSessionInfo = !!activePane?.connectionId;
@@ -136,6 +141,14 @@ export default function TabContextMenu({
       toast.error(t("tabCtx.copyFailed"));
     }
   }, [displayName, t]);
+
+  const handleOpenAI = useCallback(
+    (action: "explain_output" | "analyze_error") => {
+      onActivateTab(tab.id);
+      requestAnimationFrame(() => openAIAssistant({ action }));
+    },
+    [onActivateTab, tab.id],
+  );
 
   return (
     <>
@@ -198,6 +211,21 @@ export default function TabContextMenu({
             <MdRefresh className={iconClass} />
             {t("tabCtx.reconnect")}
           </ContextMenuItem>
+
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <MdAutoAwesome className={iconClass} />
+              {t("ai.title")}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem disabled={!canUseAI} onClick={() => handleOpenAI("explain_output")}>
+                {t("ai.explainRecent")}
+              </ContextMenuItem>
+              <ContextMenuItem disabled={!canUseAI} onClick={() => handleOpenAI("analyze_error")}>
+                {t("ai.analyzeError")}
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
 
           <ContextMenuSeparator />
 
