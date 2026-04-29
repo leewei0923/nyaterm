@@ -91,11 +91,11 @@ export interface Group {
   sort_order: number;
 }
 
-/** Managed SSH private key stored in keys.json. */
+/** Managed SSH private key stored in local app storage. */
 export interface SshKey {
   id: string;
   name: string;
-  /** True when encrypted key data exists on disk. */
+  /** True when encrypted key data exists in local storage. */
   has_key_data?: boolean;
   /** Transient: file path from the UI file picker. */
   key_file_path?: string;
@@ -103,11 +103,11 @@ export interface SshKey {
   passphrase?: string;
 }
 
-/** Managed password entry stored in passwords.json. */
+/** Managed password entry stored in local app storage. */
 export interface SavedPassword {
   id: string;
   name: string;
-  /** True when encrypted password data exists on disk. */
+  /** True when encrypted password data exists in local storage. */
   has_password?: boolean;
   /** Plaintext password (only sent when creating/updating). */
   password?: string;
@@ -119,7 +119,7 @@ export interface ConnectionAuth {
   password_id?: string;
   /** Inline password (plaintext when saving, absent when loading). */
   password?: string;
-  /** True when an inline password is stored on disk (set by backend on load). */
+  /** True when an inline password is stored locally (set by backend on load). */
   has_password?: boolean;
   key_id?: string;
   otp_id?: string;
@@ -174,7 +174,7 @@ export interface OtpEntry {
   period: number;
   /** Counter value (HOTP only). */
   counter: number;
-  /** True when encrypted secret data exists on disk. */
+  /** True when encrypted secret data exists in local storage. */
   has_secret?: boolean;
 }
 
