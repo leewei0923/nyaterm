@@ -76,12 +76,14 @@ fn database_path(config_dir: &Path) -> PathBuf {
     config_dir.join(DATABASE_FILE)
 }
 
+#[allow(dead_code)]
 pub fn json_key_for_legacy_file(file_name: &str) -> Option<&'static str> {
     LEGACY_JSON_FILES
         .iter()
         .find_map(|(name, key)| (*name == file_name).then_some(*key))
 }
 
+#[allow(dead_code)]
 pub fn text_key_for_legacy_file(file_name: &str) -> Option<&'static str> {
     LEGACY_TEXT_FILES
         .iter()
@@ -167,6 +169,7 @@ fn open_database(path: &Path) -> AppResult<Database> {
 }
 
 fn migrate_legacy_files(db: &Database, config_dir: &Path) -> AppResult<()> {
+    let mut migrated_files = Vec::new();
     let txn = db.begin_write().map_err(storage_error)?;
     {
         let mut meta = txn.open_table(META_TABLE).map_err(storage_error)?;
@@ -177,10 +180,11 @@ fn migrate_legacy_files(db: &Database, config_dir: &Path) -> AppResult<()> {
     {
         let mut json_docs = txn.open_table(JSON_DOCS_TABLE).map_err(storage_error)?;
         for (file_name, key) in LEGACY_JSON_FILES {
+            let path = config_dir.join(file_name);
             if json_docs.get(*key).map_err(storage_error)?.is_some() {
+                migrated_files.push(path);
                 continue;
             }
-            let path = config_dir.join(file_name);
             if !path.is_file() {
                 continue;
             }
@@ -188,16 +192,18 @@ fn migrate_legacy_files(db: &Database, config_dir: &Path) -> AppResult<()> {
             json_docs
                 .insert(*key, content.as_str())
                 .map_err(storage_error)?;
+            migrated_files.push(path);
         }
     }
 
     {
         let mut text_docs = txn.open_table(TEXT_DOCS_TABLE).map_err(storage_error)?;
         for (file_name, key) in LEGACY_TEXT_FILES {
+            let path = config_dir.join(file_name);
             if text_docs.get(*key).map_err(storage_error)?.is_some() {
+                migrated_files.push(path);
                 continue;
             }
-            let path = config_dir.join(file_name);
             if !path.is_file() {
                 continue;
             }
@@ -205,6 +211,7 @@ fn migrate_legacy_files(db: &Database, config_dir: &Path) -> AppResult<()> {
             text_docs
                 .insert(*key, content.as_str())
                 .map_err(storage_error)?;
+            migrated_files.push(path);
         }
     }
 
@@ -215,7 +222,23 @@ fn migrate_legacy_files(db: &Database, config_dir: &Path) -> AppResult<()> {
     }
 
     txn.commit().map_err(storage_error)?;
+    cleanup_legacy_files(migrated_files);
     Ok(())
+}
+
+fn cleanup_legacy_files(paths: Vec<PathBuf>) {
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        if let Err(error) = fs::remove_file(&path) {
+            tracing::warn!(
+                "Failed to remove migrated legacy storage file '{}': {}",
+                path.display(),
+                error
+            );
+        }
+    }
 }
 
 fn update_json_doc_in_db<T, R, F>(db: &Database, key: &str, updater: F) -> AppResult<R>
@@ -328,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_keeps_existing_redb_values() {
+    fn migration_keeps_existing_redb_values_and_removes_legacy_files() {
         let dir = unique_config_dir("migration");
         fs::create_dir_all(&dir).expect("create temp dir");
         fs::write(dir.join("settings.json"), "{\"legacy\":true}").expect("write settings");
@@ -350,8 +373,8 @@ mod tests {
                 .as_deref(),
             Some("legacy-host key value\n")
         );
-        assert!(dir.join("settings.json").exists());
-        assert!(dir.join("known_hosts").exists());
+        assert!(!dir.join("settings.json").exists());
+        assert!(!dir.join("known_hosts").exists());
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -384,6 +407,40 @@ mod tests {
                 .expect("read ai history")
                 .as_deref(),
             Some("{\"sessions\":[],\"messages\":[]}")
+        );
+        assert!(!dir.join("ai-history.json").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn failed_migration_keeps_legacy_file() {
+        let dir = unique_config_dir("migration-failure");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        fs::write(dir.join("settings.json"), [0xff, 0xfe]).expect("write invalid utf8");
+
+        let db = open_database(&database_path(&dir)).expect("open db");
+        assert!(migrate_legacy_files(&db, &dir).is_err());
+        assert!(dir.join("settings.json").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn new_storage_initializes_redb_without_legacy_files() {
+        let dir = unique_config_dir("new-storage");
+        fs::create_dir_all(&dir).expect("create temp dir");
+
+        let db = open_database(&database_path(&dir)).expect("open db");
+        migrate_legacy_files(&db, &dir).expect("initialize");
+
+        assert!(database_path(&dir).exists());
+        assert!(!dir.join("settings.json").exists());
+        assert_eq!(
+            read_json_doc(&db, JSON_SETTINGS)
+                .expect("read missing settings")
+                .as_deref(),
+            None
         );
 
         let _ = fs::remove_dir_all(dir);

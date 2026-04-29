@@ -1,4 +1,4 @@
-use super::{get_config_dir, load_json, save_json, uuid_v4};
+use super::{load_json_doc, save_json_doc, uuid_v4};
 use crate::error::{AppError, AppResult};
 use crate::utils::crypto;
 use serde::{Deserialize, Serialize};
@@ -32,9 +32,8 @@ pub struct KeysConfig {
 }
 
 pub fn load_keys(app: &AppHandle) -> AppResult<KeysConfig> {
-    let dir = get_config_dir(app)?;
-    let path = dir.join("keys.json");
-    let mut config: KeysConfig = load_json(&path)?;
+    let _ = app;
+    let mut config: KeysConfig = load_json_doc(crate::storage::JSON_KEYS)?;
     for k in &mut config.keys {
         k.has_key_data = k.key.is_some();
     }
@@ -42,8 +41,8 @@ pub fn load_keys(app: &AppHandle) -> AppResult<KeysConfig> {
 }
 
 pub fn save_keys(app: &AppHandle, config: &KeysConfig) -> AppResult<()> {
-    let dir = get_config_dir(app)?;
-    save_json(&dir.join("keys.json"), config)
+    let _ = app;
+    save_json_doc(crate::storage::JSON_KEYS, config)
 }
 
 pub fn load_key_by_id(app: &AppHandle, id: &str) -> AppResult<SshKey> {

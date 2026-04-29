@@ -1,8 +1,7 @@
-use super::{default_true, get_config_dir, load_json, save_json, uuid_v4};
+use super::{default_true, load_json_doc, save_json_doc, uuid_v4};
 use crate::error::AppResult;
 use crate::utils::crypto;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use tauri::AppHandle;
 
 pub const MASKED_SECRET_VALUE: &str = "__SET__";
@@ -251,20 +250,14 @@ fn default_history_version() -> u32 {
     CLOUD_SYNC_HISTORY_VERSION
 }
 
-fn cloud_sync_path(app: &AppHandle) -> AppResult<PathBuf> {
-    Ok(get_config_dir(app)?.join("cloud_sync.json"))
-}
-
-fn cloud_sync_state_path(app: &AppHandle) -> AppResult<PathBuf> {
-    Ok(get_config_dir(app)?.join("cloud_sync_state.json"))
-}
-
 pub fn load_cloud_sync_settings(app: &AppHandle) -> AppResult<CloudSyncSettings> {
-    load_json(&cloud_sync_path(app)?)
+    let _ = app;
+    load_json_doc(crate::storage::JSON_CLOUD_SYNC)
 }
 
 pub fn load_cloud_sync_state(app: &AppHandle) -> AppResult<CloudSyncState> {
-    let mut state: CloudSyncState = load_json(&cloud_sync_state_path(app)?)?;
+    let _ = app;
+    let mut state: CloudSyncState = load_json_doc(crate::storage::JSON_CLOUD_SYNC_STATE)?;
     if state.device_id.is_empty() {
         state.device_id = uuid_v4();
     }
@@ -272,7 +265,8 @@ pub fn load_cloud_sync_state(app: &AppHandle) -> AppResult<CloudSyncState> {
 }
 
 pub fn save_cloud_sync_state(app: &AppHandle, state: &CloudSyncState) -> AppResult<()> {
-    save_json(&cloud_sync_state_path(app)?, state)
+    let _ = app;
+    save_json_doc(crate::storage::JSON_CLOUD_SYNC_STATE, state)
 }
 
 pub fn decrypt_cloud_sync_settings(

@@ -9,6 +9,8 @@ use crate::observability::{
 use opendal::layers::{RetryLayer, TimeoutLayer, TracingLayer};
 use opendal::services::{Webdav, S3};
 use opendal::{ErrorKind, Operator};
+use redb::{Database, ReadableDatabase, TableDefinition};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
@@ -27,14 +29,19 @@ use super::portable_snapshot::{
     encode_portable_snapshot, PortableSnapshotKind,
 };
 
-const SYNC_LATEST_FILE: &str = "sync/latest.json";
+const SYNC_LATEST_FILE: &str = "sync/latest.redb";
 const SYNC_SNAPSHOTS_DIR: &str = "sync/snapshots/";
-const BACKUPS_INDEX_FILE: &str = "backups/index.json";
+const BACKUPS_INDEX_FILE: &str = "backups/index.redb";
 const BACKUPS_SNAPSHOTS_DIR: &str = "backups/snapshots/";
 const HISTORY_LIMIT: usize = 200;
 const BACKUP_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const HISTORY_LOG_DOMAIN: &str = "cloud_sync.history";
 const HISTORY_LOG_EVENT: &str = "entry";
+const REMOTE_SYNC_POINTER_KEY: &str = "latest";
+const REMOTE_BACKUP_INDEX_KEY: &str = "index";
+
+const REMOTE_SYNC_POINTER_TABLE: TableDefinition<&str, &str> = TableDefinition::new("sync_pointer");
+const REMOTE_BACKUP_INDEX_TABLE: TableDefinition<&str, &str> = TableDefinition::new("backup_index");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RemoteSyncPointer {
@@ -269,7 +276,7 @@ impl CloudSyncManager {
         let operator = build_operator(&settings)?;
         let remote_file = remote_path(
             &settings.remote_root,
-            &format!("{BACKUPS_SNAPSHOTS_DIR}{revision}.bin"),
+            &format!("{BACKUPS_SNAPSHOTS_DIR}{revision}.redb.enc"),
         );
         let raw = operator
             .read(&remote_file)
@@ -571,7 +578,7 @@ impl CloudSyncManager {
         let encrypted = encrypt_snapshot_bytes(&encoded)?;
         let snapshot_path = remote_path(
             &settings.remote_root,
-            &format!("{SYNC_SNAPSHOTS_DIR}{}.bin", envelope.revision_id),
+            &format!("{SYNC_SNAPSHOTS_DIR}{}.redb.enc", envelope.revision_id),
         );
         operator
             .write(&snapshot_path, encrypted)
@@ -585,13 +592,7 @@ impl CloudSyncManager {
             device_id: envelope.device_id.clone(),
             app_version: envelope.app_version.clone(),
         };
-        operator
-            .write(
-                &remote_path(&settings.remote_root, SYNC_LATEST_FILE),
-                serde_json::to_vec_pretty(&pointer)?,
-            )
-            .await
-            .map_err(map_storage_error)?;
+        write_sync_pointer(&operator, &settings.remote_root, &pointer).await?;
 
         {
             let mut state = self.state.lock().await;
@@ -715,7 +716,7 @@ impl CloudSyncManager {
 
         let snapshot_path = remote_path(
             &settings.remote_root,
-            &format!("{SYNC_SNAPSHOTS_DIR}{}.bin", latest.revision_id),
+            &format!("{SYNC_SNAPSHOTS_DIR}{}.redb.enc", latest.revision_id),
         );
         let raw = operator
             .read(&snapshot_path)
@@ -788,7 +789,7 @@ impl CloudSyncManager {
         let encrypted = encrypt_snapshot_bytes(&encoded)?;
         let snapshot_path = remote_path(
             &settings.remote_root,
-            &format!("{BACKUPS_SNAPSHOTS_DIR}{}.bin", envelope.revision_id),
+            &format!("{BACKUPS_SNAPSHOTS_DIR}{}.redb.enc", envelope.revision_id),
         );
         operator
             .write(&snapshot_path, encrypted)
@@ -816,18 +817,12 @@ impl CloudSyncManager {
             .collect();
         index.entries.truncate(settings.backup_retention_count);
 
-        operator
-            .write(
-                &remote_path(&settings.remote_root, BACKUPS_INDEX_FILE),
-                serde_json::to_vec_pretty(&index)?,
-            )
-            .await
-            .map_err(map_storage_error)?;
+        write_backup_index(&operator, &settings.remote_root, &index).await?;
 
         for old in overflow {
             let old_path = remote_path(
                 &settings.remote_root,
-                &format!("{BACKUPS_SNAPSHOTS_DIR}{}.bin", old.revision),
+                &format!("{BACKUPS_SNAPSHOTS_DIR}{}.redb.enc", old.revision),
             );
             let _ = operator.delete(&old_path).await;
         }
@@ -1028,9 +1023,25 @@ async fn load_sync_pointer(op: &Operator, base_root: &str) -> AppResult<Option<R
         return Ok(None);
     }
     let raw = op.read(&path).await.map_err(map_storage_error)?;
-    serde_json::from_slice(raw.to_vec().as_slice())
-        .map(Some)
-        .map_err(Into::into)
+    decode_redb_json_doc(
+        raw.to_vec().as_slice(),
+        REMOTE_SYNC_POINTER_TABLE,
+        REMOTE_SYNC_POINTER_KEY,
+    )
+    .map(Some)
+}
+
+async fn write_sync_pointer(
+    op: &Operator,
+    base_root: &str,
+    pointer: &RemoteSyncPointer,
+) -> AppResult<()> {
+    let encoded =
+        encode_redb_json_doc(REMOTE_SYNC_POINTER_TABLE, REMOTE_SYNC_POINTER_KEY, pointer)?;
+    op.write(&remote_path(base_root, SYNC_LATEST_FILE), encoded)
+        .await
+        .map_err(map_storage_error)?;
+    Ok(())
 }
 
 async fn load_backup_index(op: &Operator, base_root: &str) -> AppResult<RemoteBackupIndex> {
@@ -1042,7 +1053,66 @@ async fn load_backup_index(op: &Operator, base_root: &str) -> AppResult<RemoteBa
         });
     }
     let raw = op.read(&path).await.map_err(map_storage_error)?;
-    serde_json::from_slice(raw.to_vec().as_slice()).map_err(Into::into)
+    decode_redb_json_doc(
+        raw.to_vec().as_slice(),
+        REMOTE_BACKUP_INDEX_TABLE,
+        REMOTE_BACKUP_INDEX_KEY,
+    )
+}
+
+async fn write_backup_index(
+    op: &Operator,
+    base_root: &str,
+    index: &RemoteBackupIndex,
+) -> AppResult<()> {
+    let encoded = encode_redb_json_doc(REMOTE_BACKUP_INDEX_TABLE, REMOTE_BACKUP_INDEX_KEY, index)?;
+    op.write(&remote_path(base_root, BACKUPS_INDEX_FILE), encoded)
+        .await
+        .map_err(map_storage_error)?;
+    Ok(())
+}
+
+fn encode_redb_json_doc<T: Serialize>(
+    table: TableDefinition<&str, &str>,
+    key: &str,
+    value: &T,
+) -> AppResult<Vec<u8>> {
+    let temp = TempRedbFile::new("cloud-meta-encode");
+    {
+        let db = Database::create(temp.path()).map_err(storage_error)?;
+        let txn = db.begin_write().map_err(storage_error)?;
+        {
+            let mut docs = txn.open_table(table).map_err(storage_error)?;
+            let content = serde_json::to_string(value)?;
+            docs.insert(key, content.as_str()).map_err(storage_error)?;
+        }
+        txn.commit().map_err(storage_error)?;
+    }
+    std::fs::read(temp.path()).map_err(Into::into)
+}
+
+fn decode_redb_json_doc<T: DeserializeOwned>(
+    bytes: &[u8],
+    table: TableDefinition<&str, &str>,
+    key: &str,
+) -> AppResult<T> {
+    let temp = TempRedbFile::new("cloud-meta-decode");
+    std::fs::write(temp.path(), bytes)?;
+    let content = {
+        let db = Database::open(temp.path()).map_err(storage_error)?;
+        let read = db.begin_read().map_err(storage_error)?;
+        let docs = read.open_table(table).map_err(storage_error)?;
+        docs.get(key)
+            .map_err(storage_error)?
+            .ok_or_else(|| AppError::Config("remote redb metadata is missing".to_string()))?
+            .value()
+            .to_string()
+    };
+    serde_json::from_str(&content).map_err(Into::into)
+}
+
+fn storage_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Storage(format!("Storage error: {error}"))
 }
 
 fn remote_path(base_root: &str, child: &str) -> String {
@@ -1238,22 +1308,68 @@ pub async fn notify_config_changed(app: &tauri::AppHandle) {
     manager.inner().notify_config_changed().await;
 }
 
+struct TempRedbFile {
+    path: PathBuf,
+}
+
+impl TempRedbFile {
+    fn new(prefix: &str) -> Self {
+        Self {
+            path: std::env::temp_dir()
+                .join(format!("dragonfly-{prefix}-{}.redb", uuid::Uuid::new_v4())),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempRedbFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{map_webdav_auth_error, remote_path, CloudSyncManager};
+    use super::{
+        decode_redb_json_doc, encode_redb_json_doc, map_webdav_auth_error, remote_path,
+        CloudSyncManager, RemoteSyncPointer, REMOTE_SYNC_POINTER_KEY, REMOTE_SYNC_POINTER_TABLE,
+    };
     use crate::config::{CloudSyncSettings, S3SyncSettings, WebdavSyncSettings};
 
     #[test]
     fn remote_path_joins_without_duplicate_slashes() {
         assert_eq!(
-            remote_path("dragonfly", "sync/latest.json"),
-            "dragonfly/sync/latest.json"
+            remote_path("dragonfly", "sync/latest.redb"),
+            "dragonfly/sync/latest.redb"
         );
         assert_eq!(
-            remote_path("/dragonfly/", "/sync/latest.json"),
-            "dragonfly/sync/latest.json"
+            remote_path("/dragonfly/", "/sync/latest.redb"),
+            "dragonfly/sync/latest.redb"
         );
-        assert_eq!(remote_path("", "sync/latest.json"), "sync/latest.json");
+        assert_eq!(remote_path("", "sync/latest.redb"), "sync/latest.redb");
+    }
+
+    #[test]
+    fn remote_redb_metadata_roundtrips() {
+        let pointer = RemoteSyncPointer {
+            revision_id: "rev".to_string(),
+            created_at_ms: 1,
+            payload_hash: "hash".to_string(),
+            device_id: "dev".to_string(),
+            app_version: "1.0.0".to_string(),
+        };
+        let encoded =
+            encode_redb_json_doc(REMOTE_SYNC_POINTER_TABLE, REMOTE_SYNC_POINTER_KEY, &pointer)
+                .expect("encode pointer");
+        let decoded: RemoteSyncPointer =
+            decode_redb_json_doc(&encoded, REMOTE_SYNC_POINTER_TABLE, REMOTE_SYNC_POINTER_KEY)
+                .expect("decode pointer");
+
+        assert_eq!(decoded.revision_id, pointer.revision_id);
+        assert_eq!(decoded.payload_hash, pointer.payload_hash);
     }
 
     #[test]

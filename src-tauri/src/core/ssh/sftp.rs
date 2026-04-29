@@ -77,6 +77,13 @@ pub struct FileProperties {
     pub atime: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteTextFile {
+    pub path: String,
+    pub content: String,
+    pub size: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransferControlState {
     Running,
@@ -1855,5 +1862,64 @@ pub async fn get_file_properties(
         gid: attrs.gid.map_or_else(String::new, |v| v.to_string()),
         mtime: u64::from(attrs.mtime.unwrap_or(0)),
         atime: u64::from(attrs.atime.unwrap_or(0)),
+    })
+}
+
+pub async fn read_remote_file_text(
+    manager: Arc<SessionManager>,
+    session_id: &str,
+    path: &str,
+    max_bytes: u64,
+) -> AppResult<RemoteTextFile> {
+    use tokio::io::AsyncReadExt;
+
+    let sftp = open_sftp(&manager, session_id).await?;
+    let attrs = sftp.metadata(path).await?;
+    let size = attrs.size.unwrap_or(0);
+    let type_bits = attrs.permissions.unwrap_or(0) & SFTP_FILE_TYPE_MASK;
+    if type_bits == 0o040000 {
+        let _ = sftp.close().await;
+        return Err(AppError::Config(
+            "Directories are not supported for AI file analysis".to_string(),
+        ));
+    }
+    if size > max_bytes {
+        let _ = sftp.close().await;
+        return Err(AppError::Config(format!(
+            "File is too large for AI analysis ({} bytes > {} bytes)",
+            size, max_bytes
+        )));
+    }
+
+    let mut file = sftp
+        .open(path)
+        .await
+        .map_err(|error| AppError::Channel(format!("Failed to open remote file: {error}")))?;
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.read_to_end(&mut bytes)
+        .await
+        .map_err(|error| AppError::Channel(format!("Failed to read remote file: {error}")))?;
+    let _ = sftp.close().await;
+
+    if bytes.len() as u64 > max_bytes {
+        return Err(AppError::Config(format!(
+            "File is too large for AI analysis ({} bytes > {} bytes)",
+            bytes.len(),
+            max_bytes
+        )));
+    }
+    if bytes.contains(&0) {
+        return Err(AppError::Config(
+            "Binary files are not supported for AI analysis".to_string(),
+        ));
+    }
+    let content = String::from_utf8(bytes).map_err(|_| {
+        AppError::Config("Only UTF-8 text files are supported for AI analysis".to_string())
+    })?;
+
+    Ok(RemoteTextFile {
+        path: path.to_string(),
+        content,
+        size,
     })
 }

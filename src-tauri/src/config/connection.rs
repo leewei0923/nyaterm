@@ -1,6 +1,6 @@
 use super::{
-    get_config_dir, load_app_settings, load_proxies, save_app_settings, save_json, save_proxies,
-    uuid_v4, ProxyConfig, ProxySettings,
+    load_app_settings, load_json_raw_doc, load_proxies, save_app_settings, save_json_doc,
+    save_proxies, uuid_v4, ProxyConfig, ProxySettings,
 };
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -156,8 +156,8 @@ pub type AppConfig = SessionsConfig;
 // ── Loading / saving ────────────────────────────────────────────────────────
 
 pub fn load_sessions(app: &AppHandle) -> AppResult<SessionsConfig> {
-    let _ = get_config_dir(app)?;
-    let Some(content) = super::load_json_raw_doc(crate::storage::JSON_SESSIONS)? else {
+    let _ = app;
+    let Some(content) = load_json_raw_doc(crate::storage::JSON_SESSIONS)? else {
         return Ok(SessionsConfig::default());
     };
 
@@ -195,8 +195,8 @@ pub fn load_sessions(app: &AppHandle) -> AppResult<SessionsConfig> {
 
 /// Saves sessions config to disk.
 pub fn save_sessions(app: &AppHandle, config: &SessionsConfig) -> AppResult<()> {
-    let dir = get_config_dir(app)?;
-    save_json(&dir.join("sessions.json"), config)
+    let _ = app;
+    save_json_doc(crate::storage::JSON_SESSIONS, config)
 }
 
 /// Loads the main app config (sessions + groups).

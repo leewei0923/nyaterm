@@ -1,4 +1,4 @@
-use super::{default_false, default_true, get_config_dir, load_json, save_json, uuid_v4};
+use super::{default_false, default_true, load_json_doc, save_json_doc, uuid_v4};
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -55,15 +55,15 @@ pub struct TunnelsConfig {
 }
 
 pub fn load_tunnels(app: &AppHandle) -> AppResult<Vec<TunnelConfig>> {
-    let dir = get_config_dir(app)?;
-    let config: TunnelsConfig = load_json(&dir.join("tunnels.json"))?;
+    let _ = app;
+    let config: TunnelsConfig = load_json_doc(crate::storage::JSON_TUNNELS)?;
     Ok(config.tunnels)
 }
 
 pub fn save_tunnels(app: &AppHandle, tunnels: &[TunnelConfig]) -> AppResult<()> {
-    let dir = get_config_dir(app)?;
+    let _ = app;
     let config = TunnelsConfig {
         tunnels: tunnels.to_vec(),
     };
-    save_json(&dir.join("tunnels.json"), &config)
+    save_json_doc(crate::storage::JSON_TUNNELS, &config)
 }

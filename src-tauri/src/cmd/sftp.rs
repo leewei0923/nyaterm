@@ -85,6 +85,16 @@ pub async fn get_file_properties(
 }
 
 #[tauri::command]
+pub async fn read_remote_file_text(
+    state: tauri::State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+    max_bytes: u64,
+) -> AppResult<sftp::RemoteTextFile> {
+    sftp::read_remote_file_text(state.inner().clone(), &session_id, &path, max_bytes).await
+}
+
+#[tauri::command]
 pub async fn create_remote_file(
     state: tauri::State<'_, Arc<SessionManager>>,
     session_id: String,

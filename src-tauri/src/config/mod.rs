@@ -44,58 +44,33 @@ pub use quick_command::{
 };
 #[allow(unused_imports)]
 pub use settings::{
-    decrypt_ai_settings, encrypt_ai_settings, load_app_settings, mask_ai_settings,
-    merge_masked_ai_settings, save_app_settings, ActionLinksMatcherSettings, AiProviderKind,
-    AiProviderProfile, AiSettings, AppSettings, AppearanceSettings, DiagnosticsLogLevel,
-    DiagnosticsSettings, GeneralSettings, InteractionSettings, KeywordHighlightRule, ProxySettings,
-    SearchEngine, SearchSettings, SecuritySettings, TerminalSettings, TransferSettings,
-    TranslationSettings,
+    ai_model_id_for_credential, ai_model_id_for_provider, decrypt_ai_settings,
+    encrypt_ai_settings, load_app_settings, mask_ai_settings, merge_masked_ai_settings,
+    normalize_ai_settings, save_app_settings, ActionLinksMatcherSettings, AiCustomActionConfig,
+    AiMode, AiModelConfigItem, AiModelSource, AiProviderCredential, AiProviderKind,
+    AiProviderProfile, AiRiskLevel, AiSettings, AppSettings, AppearanceSettings,
+    DiagnosticsLogLevel, DiagnosticsSettings, GeneralSettings, InteractionSettings,
+    KeywordHighlightRule, ProxySettings, SearchEngine, SearchSettings, SecuritySettings,
+    TerminalSettings, TransferSettings, TranslationSettings,
 };
 #[allow(unused_imports)]
 pub use tunnel::{load_tunnels, save_tunnels, TunnelConfig, TunnelsConfig};
 #[allow(unused_imports)]
 pub use ui::{ActivityBarLayout, RestorablePaneNode, RestorableTab, UiConfig};
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use serde::Serialize;
-use std::fs;
-use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
 
-pub(crate) fn get_config_dir(app: &AppHandle) -> AppResult<PathBuf> {
-    let home_dir = app
-        .path()
-        .home_dir()
-        .map_err(|e| AppError::Config(e.to_string()))?;
-    let config_dir = home_dir.join(".dragonfly");
-    fs::create_dir_all(&config_dir)?;
-    Ok(config_dir)
+pub(crate) fn load_json_doc<T: serde::de::DeserializeOwned + Default>(key: &str) -> AppResult<T> {
+    crate::storage::load_json_doc(key)
 }
 
-pub(crate) fn load_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> AppResult<T> {
-    crate::storage::load_json_doc(json_doc_key_from_path(path)?)
-}
-
-pub(crate) fn save_json<T: Serialize>(path: &Path, data: &T) -> AppResult<()> {
-    crate::storage::save_json_doc(json_doc_key_from_path(path)?, data)
+pub(crate) fn save_json_doc<T: Serialize>(key: &str, data: &T) -> AppResult<()> {
+    crate::storage::save_json_doc(key, data)
 }
 
 pub(crate) fn load_json_raw_doc(key: &str) -> AppResult<Option<String>> {
     crate::storage::load_json_doc_raw(key)
-}
-
-fn json_doc_key_from_path(path: &Path) -> AppResult<&'static str> {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::Config(format!("invalid config path '{}'", path.display())))?;
-
-    crate::storage::json_key_for_legacy_file(file_name).ok_or_else(|| {
-        AppError::Config(format!(
-            "unsupported redb JSON document for config path '{}'",
-            path.display()
-        ))
-    })
 }
 
 pub(crate) fn uuid_v4() -> String {

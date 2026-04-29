@@ -1,4 +1,4 @@
-use super::{get_config_dir, load_json, save_json, uuid_v4};
+use super::{load_json_doc, save_json_doc, uuid_v4};
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -39,16 +39,15 @@ struct ProxiesConfig {
 }
 
 pub fn load_proxies(app: &AppHandle) -> AppResult<Vec<ProxyConfig>> {
-    let dir = get_config_dir(app)?;
-    let path = dir.join("proxies.json");
-    let cfg: ProxiesConfig = load_json(&path)?;
+    let _ = app;
+    let cfg: ProxiesConfig = load_json_doc(crate::storage::JSON_PROXIES)?;
     Ok(cfg.proxies)
 }
 
 pub fn save_proxies(app: &AppHandle, proxies: &[ProxyConfig]) -> AppResult<()> {
-    let dir = get_config_dir(app)?;
-    save_json(
-        &dir.join("proxies.json"),
+    let _ = app;
+    save_json_doc(
+        crate::storage::JSON_PROXIES,
         &ProxiesConfig {
             proxies: proxies.to_vec(),
         },
