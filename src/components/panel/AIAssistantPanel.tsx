@@ -1529,9 +1529,8 @@ function AIAssistantPanel({ activePane, activeConnection, intent }: AIAssistantP
     const sel = window.getSelection()?.toString();
     if (sel) {
       void navigator.clipboard.writeText(sel);
-      toast.success(t("ai.copied"));
     }
-  }, [t]);
+  }, []);
 
   const handleQuoteSelection = useCallback(() => {
     const sel = window.getSelection()?.toString()?.trim();
