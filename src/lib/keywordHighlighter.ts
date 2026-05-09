@@ -144,7 +144,13 @@ export class KeywordHighlighter implements IDisposable {
       d.dispose();
     });
     this.disposables = [];
-    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+  }
+
+  private clearRefreshTimer(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
   }
 
   /**
@@ -184,11 +190,11 @@ export class KeywordHighlighter implements IDisposable {
       return;
     }
 
-    if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(
-      () => this.refreshViewport(),
-      XTERM_PERFORMANCE_CONFIG.highlighting.debounceMs,
-    );
+    this.clearRefreshTimer();
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      this.refreshViewport();
+    }, XTERM_PERFORMANCE_CONFIG.highlighting.debounceMs);
   }
 
   /**
@@ -198,6 +204,7 @@ export class KeywordHighlighter implements IDisposable {
    * a rule change, and tears down the trim-detection sentinel.
    */
   private clearAllDecorations(): void {
+    this.clearRefreshTimer();
     const entries = [...this.decorationCache.values()];
     this.decorationCache.clear();
     this.lineToKeys.clear();
@@ -525,7 +532,13 @@ export class KeywordHighlighter implements IDisposable {
   }
 
   private refreshViewport(): void {
+    if (!this.enabled || this.suspended || this.compiledRules.length === 0) return;
     if (!this.term?.buffer?.active) return;
+
+    if (this.term.buffer.active.type === "alternate") {
+      this.clearAllDecorations();
+      return;
+    }
 
     // When xterm trims the scrollback, all buffer indices shift and our caches
     // become stale. Detect this via the sentinel marker and wipe everything.

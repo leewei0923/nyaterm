@@ -1,4 +1,6 @@
 import type {
+  IBufferCell,
+  IBufferLine,
   IBufferRange,
   IDecoration,
   IDisposable,
@@ -221,12 +223,52 @@ function resolveActions(matcher: ActionMatcher, ctx: ActionContext): ResolvedAct
     .filter((a) => !a.hidden);
 }
 
-function readLogicalLineAtAbsoluteY(terminal: Terminal, absY: number): string {
+function buildStringToCellMap(
+  line: IBufferLine,
+  stringLength: number,
+  maxCols: number,
+  scratchCell: IBufferCell,
+): number[] {
+  const map: number[] = [];
+  let col = 0;
+  let cellEndCol = 0;
+
+  while (col < maxCols && map.length < stringLength) {
+    const cell = line.getCell(col, scratchCell);
+    if (!cell) break;
+
+    const chars = cell.getChars();
+    const width = cell.getWidth();
+    const stride = width || 1;
+
+    if (chars.length === 0) {
+      map.push(col);
+    } else {
+      for (let i = 0; i < chars.length; i++) {
+        map.push(col);
+      }
+    }
+
+    cellEndCol = col + stride;
+    col += stride;
+  }
+
+  map.push(cellEndCol);
+  return map;
+}
+
+interface ParsedLine {
+  full: string;
+  offset: number;
+  lineText: string;
+  cellMap: number[] | null;
+  endY: number;
+}
+
+function readLogicalLineAtAbsoluteY(terminal: Terminal, absY: number): ParsedLine | null {
   const buffer = terminal.buffer.active;
   const line = buffer.getLine(absY);
-  if (!line) return "";
-
-  const text = line.translateToString(true);
+  if (!line) return null;
 
   // Walk backwards to find the start of a wrapped group
   let startY = absY;
@@ -236,30 +278,41 @@ function readLogicalLineAtAbsoluteY(terminal: Terminal, absY: number): string {
     startY--;
   }
 
+  let endY = absY;
+  while (endY + 1 < buffer.length) {
+    const next = buffer.getLine(endY + 1);
+    if (!next?.isWrapped) break;
+    endY++;
+  }
+
   // Rebuild the full logical line from startY up through wrapped continuations
   let full = "";
-  for (let y = startY; ; y++) {
+  let offsetChars = 0;
+  let lineText = "";
+  let cellMap: number[] | null = null;
+  const scratchCell = buffer.getNullCell();
+
+  for (let y = startY; y <= endY; y++) {
     const l = buffer.getLine(y);
     if (!l) break;
-    full += l.translateToString(true);
-    const next = buffer.getLine(y + 1);
-    if (!next?.isWrapped) break;
+
+    const maxCols = Math.min(l.length, terminal.cols);
+    const text = l.translateToString(y === endY, 0, maxCols);
+
+    if (y < absY) {
+      offsetChars += text.length;
+    } else if (y === absY) {
+      lineText = text;
+      cellMap =
+        /[^\u0000-\u00FF]/.test(text) && text.length > 0
+          ? buildStringToCellMap(l, text.length, maxCols, scratchCell)
+          : null;
+    }
+
+    full += text;
   }
 
-  // Character offset of this viewport row within the logical text
-  let offsetChars = 0;
-  for (let y = startY; y < absY; y++) {
-    const l = buffer.getLine(y);
-    if (l) offsetChars += l.translateToString(true).length;
-  }
-
-  return JSON.stringify({ full, offset: offsetChars, lineText: text });
-}
-
-interface ParsedLine {
-  full: string;
-  offset: number;
-  lineText: string;
+  return { full, offset: offsetChars, lineText, cellMap, endY };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -283,6 +336,13 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   private _scannedAbsLines = new Set<number>();
   private _decoTimer: ReturnType<typeof setTimeout> | null = null;
   private _lastViewportY = -1;
+  private _sentinelMarker: IMarker | null = null;
+  private _sentinelDisposable: IDisposable | null = null;
+  private _bufferTrimmed = false;
+
+  private static readonly OVERSCAN_LINES = 200;
+  private static readonly DECORATION_DEBOUNCE_MS = 50;
+  private static readonly MAX_CACHE_ENTRIES = 2000;
 
   constructor(matchers: ActionMatcher[] = [], options: ActionLinksAddonOptions = {}) {
     this._matchers = [...matchers].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
@@ -377,7 +437,12 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   /* ILinkProvider */
   provideLinks(bufferLineNumber: number, callback: (links: ILink[] | undefined) => void): void {
     const terminal = this._terminal;
-    if (!terminal || this._suspended || this._matchers.length === 0) {
+    if (
+      !terminal ||
+      this._suspended ||
+      this._matchers.length === 0 ||
+      terminal.buffer.active.type === "alternate"
+    ) {
       callback(undefined);
       return;
     }
@@ -388,17 +453,11 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
       return;
     }
 
-    const { full: logicalText, offset: lineOffset, lineText } = parsed;
-
-    let actionLinks = this._cache.get(logicalText);
-    if (!actionLinks) {
-      actionLinks = this._computeActionLinks(terminal, logicalText, bufferLineNumber);
-      this._cache.set(logicalText, actionLinks);
-    }
+    const actionLinks = this._getCachedActionLinks(terminal, parsed.full, bufferLineNumber);
 
     const ilinks: ILink[] = [];
     for (const al of actionLinks) {
-      const ilink = this._actionLinkToILink(al, lineText, lineOffset, bufferLineNumber);
+      const ilink = this._actionLinkToILink(al, parsed, bufferLineNumber);
       if (ilink) ilinks.push(ilink);
     }
 
@@ -407,31 +466,75 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
 
   /* ── Decoration layer ────────────────────────────────────────────────────── */
 
+  private _clearDecoTimer(): void {
+    if (this._decoTimer) {
+      clearTimeout(this._decoTimer);
+      this._decoTimer = null;
+    }
+  }
+
+  private _disposeSentinel(): void {
+    this._sentinelDisposable?.dispose();
+    this._sentinelMarker?.dispose();
+    this._sentinelDisposable = null;
+    this._sentinelMarker = null;
+  }
+
+  private _installSentinel(terminal: Terminal): void {
+    this._disposeSentinel();
+
+    const buffer = terminal.buffer.active;
+    if (!buffer || buffer.length === 0) return;
+
+    const cursorAbsY = buffer.baseY + buffer.cursorY;
+    const marker = terminal.registerMarker(-cursorAbsY);
+    if (!marker || marker.line < 0) return;
+
+    this._sentinelMarker = marker;
+    this._sentinelDisposable = marker.onDispose(() => {
+      this._bufferTrimmed = true;
+      this._sentinelMarker = null;
+      this._sentinelDisposable = null;
+    });
+  }
+
   private _scheduleDecoRefresh(): void {
     if (this._suspended || this._matchers.length === 0) return;
-    if (this._decoTimer) clearTimeout(this._decoTimer);
+    this._clearDecoTimer();
     this._decoTimer = setTimeout(() => {
       this._decoTimer = null;
       const term = this._terminal;
       if (term) this._refreshDecorations(term);
-    }, 50);
+    }, ActionLinksAddon.DECORATION_DEBOUNCE_MS);
   }
 
   private _refreshDecorations(terminal: Terminal): void {
-    if (!terminal.buffer?.active || this._matchers.length === 0) return;
+    if (this._suspended || !terminal.buffer?.active || this._matchers.length === 0) return;
     if (terminal.buffer.active.type === "alternate") {
       this._clearAllDecorations();
       return;
+    }
+
+    if (this._bufferTrimmed) {
+      this._clearAllDecorations();
+    }
+    if (!this._sentinelMarker) {
+      this._installSentinel(terminal);
     }
 
     const buffer = terminal.buffer.active;
     const cursorAbsY = buffer.baseY + buffer.cursorY;
     const rows = terminal.rows;
     const viewportY = buffer.viewportY;
+    const totalLines = buffer.length;
+    const scanStart = Math.max(0, viewportY - ActionLinksAddon.OVERSCAN_LINES);
+    const scanEnd = Math.min(
+      totalLines - 1,
+      viewportY + rows - 1 + ActionLinksAddon.OVERSCAN_LINES,
+    );
     const requiredKeys = new Set<string>();
 
-    for (let y = 0; y < rows; y++) {
-      const absLineY = viewportY + y;
+    for (let absLineY = scanStart; absLineY <= scanEnd; absLineY++) {
       const line = buffer.getLine(absLineY);
       if (!line) continue;
 
@@ -441,44 +544,36 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
         continue;
       }
 
-      const parsed = this._getLogicalLineByViewportLine(terminal, y);
+      const parsed = this._getLogicalLineByAbsoluteLine(terminal, absLineY);
       if (!parsed) {
-        this._scannedAbsLines.add(absLineY);
+        if (absLineY < buffer.baseY) {
+          this._scannedAbsLines.add(absLineY);
+        }
         continue;
       }
 
-      const { full: logicalText, offset: lineOffset, lineText } = parsed;
-      let actionLinks = this._cache.get(logicalText);
-      if (!actionLinks) {
-        actionLinks = this._computeActionLinks(terminal, logicalText, absLineY + 1);
-        this._cache.set(logicalText, actionLinks);
-      }
+      const actionLinks = this._getCachedActionLinks(terminal, parsed.full, absLineY + 1);
 
       const lineKeys: string[] = [];
       for (const al of actionLinks) {
-        const startIndex = Number(al.ctx.data._startIndex ?? "0");
-        const endIndex = Number(al.ctx.data._endIndex ?? "0");
-        const lineStart = lineOffset;
-        const lineEnd = lineOffset + lineText.length;
-        if (endIndex <= lineStart || startIndex >= lineEnd) continue;
+        const span = this._getActionLinkCellSpan(al, parsed);
+        if (!span) continue;
 
-        const colStart = Math.max(startIndex - lineOffset, 0);
-        const colEnd = Math.min(endIndex - lineOffset, lineText.length);
-        const width = colEnd - colStart;
-        if (width <= 0) continue;
-
-        const key = this._ensureDecoration(absLineY, colStart, width, cursorAbsY);
+        const key = this._ensureDecoration(absLineY, span.cellStart, span.cellWidth, cursorAbsY);
         if (key) {
           lineKeys.push(key);
           requiredKeys.add(key);
         }
       }
 
-      // Only memoize scrollback lines (screen lines can still change)
-      if (absLineY < buffer.baseY) {
+      // Only memoize fully-scrollback logical lines. A wrapped logical line
+      // touching the live screen can still change through shell redraws.
+      if (parsed.endY < buffer.baseY) {
         this._scannedAbsLines.add(absLineY);
         if (lineKeys.length > 0) {
           this._lineToDecoKeys.set(absLineY, lineKeys);
+        } else {
+          this._lineToDecoKeys.delete(absLineY);
         }
       }
     }
@@ -494,6 +589,13 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
         this._decoCache.delete(key);
         entry.deco.dispose();
         entry.marker.dispose();
+      }
+    }
+
+    for (const absLineY of this._scannedAbsLines) {
+      if (absLineY < scanStart || absLineY > scanEnd) {
+        this._scannedAbsLines.delete(absLineY);
+        this._lineToDecoKeys.delete(absLineY);
       }
     }
   }
@@ -548,15 +650,15 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   }
 
   private _clearAllDecorations(): void {
-    if (this._decoTimer) {
-      clearTimeout(this._decoTimer);
-      this._decoTimer = null;
-    }
+    this._clearDecoTimer();
     const entries = [...this._decoCache.values()];
+    this._cache.clear();
     this._decoCache.clear();
     this._lineToDecoKeys.clear();
     this._scannedAbsLines.clear();
     this._lastViewportY = -1;
+    this._disposeSentinel();
+    this._bufferTrimmed = false;
     for (const { deco, marker } of entries) {
       deco.dispose();
       marker.dispose();
@@ -569,13 +671,7 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
     terminal: Terminal,
     absoluteLine: number,
   ): ParsedLine | null {
-    try {
-      const raw = readLogicalLineAtAbsoluteY(terminal, absoluteLine);
-      if (!raw) return null;
-      return JSON.parse(raw) as ParsedLine;
-    } catch {
-      return null;
-    }
+    return readLogicalLineAtAbsoluteY(terminal, absoluteLine);
   }
 
   private _getLogicalLineByBufferLine(
@@ -592,6 +688,27 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
   ): ParsedLine | null {
     const absoluteLine = terminal.buffer.active.viewportY + viewportLine;
     return this._getLogicalLineByAbsoluteLine(terminal, absoluteLine);
+  }
+
+  private _getCachedActionLinks(
+    terminal: Terminal,
+    logicalText: string,
+    bufferLineNumber: number,
+  ): ActionLink[] {
+    const cached = this._cache.get(logicalText);
+    if (cached) return cached;
+
+    const actionLinks = this._computeActionLinks(terminal, logicalText, bufferLineNumber);
+    this._cache.set(logicalText, actionLinks);
+
+    if (this._cache.size > ActionLinksAddon.MAX_CACHE_ENTRIES) {
+      const oldestKey = this._cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this._cache.delete(oldestKey);
+      }
+    }
+
+    return actionLinks;
   }
 
   private _computeActionLinks(
@@ -645,7 +762,11 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
           range: placeholderRange,
           ctx: {
             ...ctx,
-            data: { ...ctx.data, _startIndex: String(m.startIndex), _endIndex: String(m.endIndex) },
+            data: {
+              ...ctx.data,
+              _startIndex: String(m.startIndex),
+              _endIndex: String(m.endIndex),
+            },
           },
           actions,
         });
@@ -655,26 +776,42 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
     return results;
   }
 
-  private _actionLinkToILink(
+  private _getActionLinkCellSpan(
     al: ActionLink,
-    lineText: string,
-    lineOffset: number,
-    bufferLineNumber: number,
-  ): ILink | null {
+    parsed: ParsedLine,
+  ): { cellStart: number; cellWidth: number } | null {
     const startIndex = Number(al.ctx.data._startIndex ?? "0");
     const endIndex = Number(al.ctx.data._endIndex ?? "0");
-    const lineStart = lineOffset;
-    const lineEnd = lineOffset + lineText.length;
+    const lineStart = parsed.offset;
+    const lineEnd = parsed.offset + parsed.lineText.length;
 
     if (endIndex <= lineStart || startIndex >= lineEnd) return null;
 
-    const segmentStart = Math.max(startIndex - lineOffset, 0);
-    const segmentEnd = Math.min(endIndex - lineOffset, lineText.length);
+    const segmentStart = Math.max(startIndex - parsed.offset, 0);
+    const segmentEnd = Math.min(endIndex - parsed.offset, parsed.lineText.length);
     if (segmentEnd <= segmentStart) return null;
 
+    const cellStart = parsed.cellMap
+      ? (parsed.cellMap[segmentStart] ?? segmentStart)
+      : segmentStart;
+    const cellEnd = parsed.cellMap ? (parsed.cellMap[segmentEnd] ?? segmentEnd) : segmentEnd;
+    const cellWidth = cellEnd - cellStart;
+    if (cellWidth <= 0) return null;
+
+    return { cellStart, cellWidth };
+  }
+
+  private _actionLinkToILink(
+    al: ActionLink,
+    parsed: ParsedLine,
+    bufferLineNumber: number,
+  ): ILink | null {
+    const span = this._getActionLinkCellSpan(al, parsed);
+    if (!span) return null;
+
     const range: IBufferRange = {
-      start: { x: segmentStart + 1, y: bufferLineNumber },
-      end: { x: segmentEnd, y: bufferLineNumber },
+      start: { x: span.cellStart + 1, y: bufferLineNumber },
+      end: { x: span.cellStart + span.cellWidth, y: bufferLineNumber },
     };
 
     const ctxWithRange: ActionContext = { ...al.ctx, range };
@@ -772,7 +909,7 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
       if (executeCommand) {
         await executeCommand(cmd, action, al.ctx, trigger);
       } else if (sendInput) {
-        sendInput(cmd + "\r");
+        sendInput(`${cmd}\r`);
       }
     } catch (err) {
       policy?.onExecutionError?.(err, action, al.ctx, trigger);
@@ -796,7 +933,7 @@ export class ActionLinksAddon implements ITerminalAddon, ILinkProvider {
     if (!terminal) return [];
     const parsed = this._getLogicalLineByViewportLine(terminal, viewportLine);
     if (!parsed) return [];
-    return this._computeActionLinks(
+    return this._getCachedActionLinks(
       terminal,
       parsed.full,
       terminal.buffer.active.viewportY + viewportLine + 1,

@@ -48,7 +48,7 @@ export function useActionLinks(
   terminalRef: React.RefObject<Terminal | null>,
   terminalSettings: AppSettings["terminal"],
   sessionId: string,
-  sendInputRef: React.RefObject<((data: string) => void) | null>,
+  executeCommandRef: React.RefObject<((command: string) => void) | null>,
   suspended = false,
 ): UseActionLinksResult {
   const addonRef = useRef<ActionLinksAddon | null>(null);
@@ -86,7 +86,7 @@ export function useActionLinks(
       allowCtrlOrMetaClickExecute: true,
       allowAltClickMenu: true,
       fallbackAltClickToDefaultAction: true,
-      sendInput: (data) => sendInputRef.current?.(data),
+      executeCommand: (command) => executeCommandRef.current?.(command),
       showTooltip: ({ event, link }) => {
         setTooltipState({ x: event.clientX, y: event.clientY, link });
       },

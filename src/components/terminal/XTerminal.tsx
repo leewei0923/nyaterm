@@ -205,7 +205,7 @@ export default function XTerminal({
   const terminalAppSettingsRef = useRef(terminalAppSettings);
   const tRef = useRef(t);
   const doFindRef = useRef<(selection?: string) => void>(() => {});
-  const sendInputRef = useRef<((data: string) => void) | null>(null);
+  const executeActionCommandRef = useRef<((command: string) => void) | null>(null);
   const disconnectedRef = useRef(false);
   const reconnectingRef = useRef(false);
   const outputWriteQueueRef = useRef(Promise.resolve());
@@ -550,15 +550,39 @@ export default function XTerminal({
       }
     };
 
-    const replaceInputCommand = (command: string) => {
+    const buildReplaceInputData = (command: string) => {
       const trackedState = inputStateRef.current;
-      const input = trackedState.lineRewriteRequired
-        ? `\u0005\u0015${command}`
-        : `${"\x7f".repeat(trackedState.value.length)}${command}`;
+      if (
+        trackedState.value.length === 0 &&
+        !trackedState.lineRewriteRequired &&
+        !trackedState.desynced &&
+        !trackedState.multiline
+      ) {
+        return command;
+      }
+      return `\u0005\u0015${command}`;
+    };
+
+    const replaceInputCommand = (command: string) => {
+      const input = buildReplaceInputData(command);
       void sendSessionInput(sessionId, input, {
         preview: { kind: "replace", value: command },
         registerSubmission: null,
       }).catch(() => {});
+    };
+
+    const executeInputCommand = async (command: string) => {
+      const input = buildReplaceInputData(command);
+      await sendSessionInput(sessionId, input, {
+        preview: { kind: "replace-and-execute", value: command },
+        registerSubmission: null,
+      });
+      inputStateRef.current = applyTerminalInputData(inputStateRef.current, "\r");
+      syncSuggestionsWithInputState();
+      await sendSessionInput(sessionId, "\r", {
+        preview: null,
+        registerSubmission: command,
+      });
     };
 
     const sendCommandEnter = (command: string) => {
@@ -588,29 +612,14 @@ export default function XTerminal({
       getSelectedText: () => terminal.getSelection(),
       getInputBuffer: () => inputStateRef.current.value,
       insertCommand: async (command) => {
-        const trackedState = inputStateRef.current;
-        const input = trackedState.lineRewriteRequired
-          ? `\u0005\u0015${command}`
-          : `${"\x7f".repeat(trackedState.value.length)}${command}`;
+        const input = buildReplaceInputData(command);
         await sendSessionInput(sessionId, input, {
           preview: { kind: "replace", value: command },
           registerSubmission: null,
         });
       },
       executeCommand: async (command) => {
-        const trackedState = inputStateRef.current;
-        const input = trackedState.lineRewriteRequired
-          ? `\u0005\u0015${command}`
-          : `${"\x7f".repeat(trackedState.value.length)}${command}`;
-        await sendSessionInput(sessionId, input, {
-          preview: { kind: "replace-and-execute", value: command },
-          registerSubmission: null,
-        });
-        inputStateRef.current = applyTerminalInputData(inputStateRef.current, "\r");
-        await sendSessionInput(sessionId, "\r", {
-          preview: null,
-          registerSubmission: command,
-        });
+        await executeInputCommand(command);
       },
       focus: () => terminal.focus(),
     });
@@ -620,8 +629,8 @@ export default function XTerminal({
       syncSuggestionsWithInputState();
     };
 
-    sendInputRef.current = (data: string) => {
-      void sendSessionInput(sessionId, data).catch(() => {});
+    executeActionCommandRef.current = (command: string) => {
+      void executeInputCommand(command).catch(() => {});
     };
     const pasteText = (text: string) => {
       if (text) terminal.paste(text);
@@ -1218,7 +1227,7 @@ export default function XTerminal({
       inputStateRef.current = createTerminalInputState();
       shellIntegrationRef.current.enabled = false;
       shellIntegrationRef.current.commandRunning = false;
-      sendInputRef.current = null;
+      executeActionCommandRef.current = null;
       continueRiskCommandRef.current = null;
       replaceInputCommandRef.current = null;
       riskCheckPendingRef.current = false;
@@ -1283,7 +1292,7 @@ export default function XTerminal({
     terminalRef,
     terminalSettings,
     sessionId,
-    sendInputRef,
+    executeActionCommandRef,
     performanceMode === "overloaded",
   );
 
