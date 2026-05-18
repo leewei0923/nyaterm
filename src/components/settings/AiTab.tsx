@@ -29,7 +29,6 @@ import {
   SettingNumberInput,
   SettingRow,
   SettingSection,
-  SettingSelect,
   SettingSwitch,
 } from "./SettingFormItems";
 

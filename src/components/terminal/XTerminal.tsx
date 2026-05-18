@@ -657,12 +657,6 @@ export default function XTerminal({
       });
     };
 
-    const sendCommandEnter = (command: string) => {
-      inputStateRef.current = applyTerminalInputData(inputStateRef.current, "\r");
-      syncSuggestionsWithInputState();
-      sendRawInput("\r", command);
-    };
-
     replaceInputCommandRef.current = replaceInputCommand;
 
     const unregisterTerminalContext = registerTerminalContextProvider(sessionId, {
