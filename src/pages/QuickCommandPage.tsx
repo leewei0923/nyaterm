@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { getErrorMessage } from "@/lib/errors";
 import { invoke } from "@/lib/invoke";
 import { parseJsonSearchParam } from "@/lib/utils";
 import type { QuickCommand, QuickCommandCategory } from "@/types/global";
@@ -58,10 +59,12 @@ export default function QuickCommandPage() {
   );
   const [errors, setErrors] = useState<{ label?: string; command?: string; general?: string }>({});
 
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     invoke<QuickCommandsConfig>("get_quick_commands")
       .then((cfg) => setSavedCategories(cfg.categories || []))
-      .catch(() => {});
+      .catch((e) => setErrors((p) => ({ ...p, general: getErrorMessage(e) })));
   }, []);
 
   const filteredCategories = savedCategories.filter((c) =>
@@ -104,9 +107,16 @@ export default function QuickCommandPage() {
       execution_mode: executionMode,
     };
 
-    await invoke("upsert_quick_command", { command: cmd, newCategory });
-    await emit("quick-command-saved", { command: cmd, newCategory });
-    getCurrentWindow().close();
+    setSaving(true);
+    try {
+      await invoke("upsert_quick_command", { command: cmd, newCategory });
+      await emit("quick-command-saved", { command: cmd, newCategory });
+      getCurrentWindow().close();
+    } catch (e) {
+      setErrors((p) => ({ ...p, general: getErrorMessage(e) }));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleClose = () => getCurrentWindow().close();
@@ -378,8 +388,8 @@ export default function QuickCommandPage() {
         <Button variant="ghost" size="sm" className="text-xs px-4" onClick={handleClose}>
           {t("dialog.cancel")}
         </Button>
-        <Button size="sm" className="text-xs px-4" onClick={handleSave}>
-          {t("dialog.save")}
+        <Button size="sm" className="text-xs px-4" onClick={handleSave} disabled={saving}>
+          {saving ? t("dialog.saving") : t("dialog.save")}
         </Button>
       </div>
     </div>

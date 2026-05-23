@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { getErrorMessage } from "@/lib/errors";
 import { invoke } from "@/lib/invoke";
 import type { Group, OtpEntry, ProxyConfig, SavedConnection } from "@/types/global";
 
@@ -91,13 +92,13 @@ export default function NewSessionPage() {
   useEffect(() => {
     invoke<Group[]>("get_groups")
       .then(setGroups)
-      .catch(() => {});
+      .catch((e) => setError(getErrorMessage(e)));
     invoke<ProxyConfig[]>("get_proxies")
       .then(setProxies)
-      .catch(() => {});
+      .catch((e) => setError(getErrorMessage(e)));
     invoke<OtpEntry[]>("get_otp_entries")
       .then(setOtpEntries)
-      .catch(() => {});
+      .catch((e) => setError(getErrorMessage(e)));
     invoke<SavedConnection[]>("get_saved_connections")
       .then((conns) => {
         setSavedConnections(conns);
@@ -107,6 +108,7 @@ export default function NewSessionPage() {
 
         const found = conns.find((connection) => connection.id === editId);
         if (!found) {
+          setError(t("dialog.connectionNotFound"));
           return;
         }
 
@@ -152,8 +154,8 @@ export default function NewSessionPage() {
           setSerialBackspaceMode(found.backspace_mode || "ctrl_h");
         }
       })
-      .catch(() => {});
-  }, [editId]);
+      .catch((e) => setError(getErrorMessage(e)));
+  }, [editId, t]);
 
   const loadSerialPorts = useCallback(async () => {
     setSerialPortsLoading(true);
@@ -468,7 +470,7 @@ export default function NewSessionPage() {
       resetForm();
       getCurrentWindow().close();
     } catch (e) {
-      setError(String(e));
+      setError(getErrorMessage(e));
     } finally {
       setConnecting(false);
     }
