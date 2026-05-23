@@ -39,17 +39,6 @@ pub fn get_app_settings(app: tauri::AppHandle) -> AppResult<config::AppSettings>
 }
 
 #[tauri::command]
-pub fn get_master_password_value(app: tauri::AppHandle) -> AppResult<Option<String>> {
-    let settings = config::load_app_settings(&app)?;
-    settings
-        .security
-        .master_password
-        .as_deref()
-        .map(crypto::decrypt_settings_secret)
-        .transpose()
-}
-
-#[tauri::command]
 pub async fn save_app_settings(
     app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<CloudSyncManager>>,
@@ -142,6 +131,15 @@ pub async fn persist_app_settings(
     crate::tray::schedule_refresh(app);
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn save_app_ui_settings(ui: config::UiConfig) -> AppResult<()> {
+    use crate::storage::{self, SettingsDocKey};
+    storage::update_settings_doc(SettingsDocKey::AppSettings, |settings: &mut config::AppSettings| {
+        settings.ui = ui;
+        Ok(())
+    })
 }
 
 #[tauri::command]

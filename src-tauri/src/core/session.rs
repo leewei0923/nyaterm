@@ -18,6 +18,7 @@ use tauri::Emitter;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 const HISTORY_SAVE_DEBOUNCE: Duration = Duration::from_millis(100);
+const HISTORY_EVENT_DEBOUNCE: Duration = Duration::from_millis(500);
 
 pub type SharedCwd = Arc<Mutex<Option<String>>>;
 
@@ -137,6 +138,8 @@ pub struct SessionManager {
     command_submissions: Arc<Mutex<HashMap<String, CommandSubmissionState>>>,
     history_save_notify: Arc<Notify>,
     history_save_worker_started: AtomicBool,
+    history_event_notify: Arc<Notify>,
+    history_event_worker_started: AtomicBool,
     app_handle: OnceLock<tauri::AppHandle>,
 }
 
@@ -149,6 +152,8 @@ impl SessionManager {
             command_submissions: Arc::new(Mutex::new(HashMap::new())),
             history_save_notify: Arc::new(Notify::new()),
             history_save_worker_started: AtomicBool::new(false),
+            history_event_notify: Arc::new(Notify::new()),
+            history_event_worker_started: AtomicBool::new(false),
             app_handle: OnceLock::new(),
         }
     }
@@ -342,9 +347,38 @@ impl SessionManager {
         }
 
         self.request_history_save();
-        if let Some(app) = self.app_handle.get() {
-            let _ = app.emit("command-history-changed", ());
+        self.request_history_event();
+    }
+
+    fn request_history_event(&self) {
+        self.ensure_history_event_worker();
+        self.history_event_notify.notify_one();
+    }
+
+    fn ensure_history_event_worker(&self) {
+        if self
+            .history_event_worker_started
+            .swap(true, Ordering::SeqCst)
+        {
+            return;
         }
+
+        let notify = self.history_event_notify.clone();
+        let app_handle = self.app_handle.clone();
+
+        tauri::async_runtime::spawn(async move {
+            loop {
+                notify.notified().await;
+                tokio::time::sleep(HISTORY_EVENT_DEBOUNCE).await;
+                while tokio::time::timeout(HISTORY_EVENT_DEBOUNCE, notify.notified())
+                    .await
+                    .is_ok()
+                {}
+                if let Some(app) = app_handle.get() {
+                    let _ = app.emit("command-history-changed", ());
+                }
+            }
+        });
     }
 
     fn ensure_history_save_worker(&self) {

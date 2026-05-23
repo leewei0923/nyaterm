@@ -338,7 +338,10 @@ pub async fn apply_portable_snapshot(
         .settings
         .clone()
         .apply_to(config::load_app_settings(app).unwrap_or_default());
-    config::save_app_settings(app, &merged)?;
+    let mut persisted = merged.clone();
+    persisted.cloud_sync = config::encrypt_cloud_sync_settings(merged.cloud_sync.clone())?;
+    persisted.ai = config::encrypt_ai_settings(merged.ai.clone())?;
+    config::save_app_settings(app, &persisted)?;
 
     if let Some(master_key) = &snapshot.master_key_token {
         crate::storage::save_master_key_token(master_key)?;
