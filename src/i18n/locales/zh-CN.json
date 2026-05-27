@@ -246,6 +246,8 @@
     "newGroupParentHint": "将在「{{group}}」下创建子分组",
     "newGroupPlaceholder": "新建分组...",
     "newGroupRootHint": "将在顶层创建分组",
+    "noAuthentication": "无",
+    "noAuthenticationDescription": "不使用密码或私钥发起连接。仅适用于允许 none 认证，或会继续交互式请求凭据的 SSH 服务端。",
     "noKeys": "暂无密钥",
     "noOtp": "无",
     "noOtpEntries": "暂无 OTP 条目",

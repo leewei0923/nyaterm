@@ -246,6 +246,8 @@
     "newGroupParentHint": "Create as a subgroup under \"{{group}}\"",
     "newGroupPlaceholder": "New group...",
     "newGroupRootHint": "Create at the top level",
+    "noAuthentication": "None",
+    "noAuthenticationDescription": "Connect without a password or private key. Use this only for SSH servers that allow none authentication or will request credentials interactively.",
     "noKeys": "No keys configured",
     "noOtp": "None",
     "noOtpEntries": "No OTP entries",
