@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type ComponentType,
@@ -93,6 +94,16 @@ export default function SettingsPage() {
       scrollContainerRef.current.scrollTop = scrollStates.current[activeTab] || 0;
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    const unlisten = listen<{ tab: string }>("settings-open-tab", ({ payload }) => {
+      setActiveTab(payload.tab === "ai" ? "ai-general" : payload.tab);
+    });
+
+    return () => {
+      unlisten.then((dispose) => dispose());
+    };
+  }, []);
 
   type SettingsCategory = {
     id: string;
