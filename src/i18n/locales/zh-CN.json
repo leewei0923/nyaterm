@@ -676,6 +676,7 @@
     "command": "命令",
     "commandPlaceholder": "例如：ls -la\n使用 {{变量名}} 注入动态参数。",
     "commandScript": "命令脚本",
+    "compactListMode": "紧凑列表",
     "createCategory": "创建 \"{{name}}\"",
     "delete": "删除",
     "deleteCategory": "删除分类",
