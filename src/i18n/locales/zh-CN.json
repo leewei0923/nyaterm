@@ -1422,6 +1422,8 @@
     "disconnectSuccess": "连接已断开",
     "duplicate": "复制会话",
     "duplicateFailed": "会话复制失败",
+    "multiplexSsh": "复用 SSH 通道",
+    "multiplexSshFailed": "SSH 通道复用失败",
     "nameCopied": "标签名称已复制",
     "reconnect": "重新连接会话",
     "reconnectFailed": "重新连接失败",

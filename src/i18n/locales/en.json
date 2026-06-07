@@ -1422,6 +1422,8 @@
     "disconnectSuccess": "Disconnected",
     "duplicate": "Duplicate",
     "duplicateFailed": "Duplicate failed",
+    "multiplexSsh": "Reuse SSH Channel",
+    "multiplexSshFailed": "Failed to reuse SSH channel",
     "nameCopied": "Tab name copied",
     "reconnect": "Reconnect Session",
     "reconnectFailed": "Reconnect failed",
