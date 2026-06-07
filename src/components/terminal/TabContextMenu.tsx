@@ -16,6 +16,7 @@ import {
   MdRefresh,
   MdVerticalSplit,
 } from "react-icons/md";
+import { TbArrowBarToRight, TbCircleDotFilled } from "react-icons/tb";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -315,10 +316,12 @@ export default function TabContextMenu({
             disabled={!canCloseInactive}
             onClick={() => void onCloseInactive(tab.id)}
           >
+            <TbCircleDotFilled className={iconClass} />
             {t("tabCtx.closeInactive")}
           </ContextMenuItem>
 
           <ContextMenuItem disabled={!canCloseRight} onClick={() => void onCloseRight(tab.id)}>
+            <TbArrowBarToRight className={iconClass} />
             {t("tabCtx.closeRight")}
           </ContextMenuItem>
 
