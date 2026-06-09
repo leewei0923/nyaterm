@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MdAdd, MdDelete, MdExpandLess, MdExpandMore, MdRefresh } from "react-icons/md";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SelectItem } from "@/components/ui/select";
@@ -176,15 +177,25 @@ export function AiGeneralTab() {
 interface ModelGroup {
   groupKey: string;
   label: string;
+  credential?: AIProviderCredential;
   models: AIModelConfigItem[];
+}
+
+function groupKeyForCredential(credential: AIProviderCredential) {
+  return isBuiltinProvider(credential.id) ? credential.provider_kind : credential.id;
 }
 
 function groupModels(
   models: AIModelConfigItem[],
   credentials: AIProviderCredential[],
 ): ModelGroup[] {
-  const credentialMap = new Map(credentials.map((c) => [c.id, c]));
+  const credentialMap = new Map<string, AIProviderCredential>();
   const groups = new Map<string, AIModelConfigItem[]>();
+  for (const credential of credentials) {
+    const key = groupKeyForCredential(credential);
+    credentialMap.set(key, credential);
+    if (!groups.has(key)) groups.set(key, []);
+  }
   for (const model of models) {
     const key = model.credential_id ?? model.provider_kind ?? "unknown";
     const list = groups.get(key);
@@ -197,7 +208,7 @@ function groupModels(
       cred && !isBuiltinProvider(cred.id)
         ? cred.name || "Custom Provider"
         : getProviderLabel(groupKey);
-    return { groupKey, label, models: items };
+    return { groupKey, label, credential: cred, models: items };
   });
 }
 
@@ -206,9 +217,15 @@ export function AiModelsTab() {
   const { appSettings, updateAppSettings } = useApp();
   const ai = appSettings.ai;
   const [query, setQuery] = useState("");
+  const [manualModelNames, setManualModelNames] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const update = (patch: Partial<AISettings>) => updateAppSettings({ ai: { ...ai, ...patch } });
+
+  const enabledCredentials = useMemo(
+    () => ai.provider_credentials.filter((credential) => credential.enabled),
+    [ai.provider_credentials],
+  );
 
   const enabledProviderKinds = useMemo(() => {
     const kinds = new Set<string>();
@@ -233,8 +250,8 @@ export function AiModelsTab() {
   }, [visibleModels, query]);
 
   const rawGroupedModels = useMemo(
-    () => groupModels(filteredModels, ai.provider_credentials),
-    [filteredModels, ai.provider_credentials],
+    () => groupModels(filteredModels, enabledCredentials),
+    [filteredModels, enabledCredentials],
   );
 
   const sortOrderRef = useRef<Map<string, string[]>>(new Map());
@@ -311,6 +328,72 @@ export function AiModelsTab() {
       return next;
     });
     updateModels(models);
+  };
+
+  const addManualModel = (credential: AIProviderCredential) => {
+    const groupKey = groupKeyForCredential(credential);
+    const name = (manualModelNames[groupKey] ?? "").trim();
+    if (!name || !credential) return;
+
+    const builtin = isBuiltinProvider(credential.id);
+    const id = builtin
+      ? aiModelIdForProvider(credential.provider_kind, name)
+      : aiModelIdForCredential(credential.id, name);
+    const existing = ai.models.find((model) => model.id === id);
+
+    if (existing?.enabled) {
+      toast.info(t("ai.manualModelExists", { model: name }));
+      return;
+    }
+
+    if (existing) {
+      const models = ai.models.map((model) =>
+        model.id === id
+          ? {
+              ...model,
+              name,
+              provider_kind: credential.provider_kind,
+              credential_id: builtin ? null : credential.id,
+              enabled: true,
+            }
+          : model,
+      );
+      updateModels(models);
+      setManualModelNames((prev) => ({ ...prev, [groupKey]: "" }));
+      toast.success(t("ai.manualModelAdded", { model: name }));
+      return;
+    }
+
+    const model: AIModelConfigItem = {
+      id,
+      name,
+      provider_kind: credential.provider_kind,
+      credential_id: builtin ? null : credential.id,
+      enabled: true,
+      source: "manual",
+      last_seen_at: null,
+    };
+    const models = [model, ...ai.models];
+    update({
+      models,
+      default_model_id:
+        ai.default_model_id && models.some((item) => item.enabled && item.id === ai.default_model_id)
+          ? ai.default_model_id
+          : model.id,
+    });
+    setManualModelNames((prev) => ({ ...prev, [groupKey]: "" }));
+    toast.success(t("ai.manualModelAdded", { model: name }));
+  };
+
+  const removeManualModel = (id: string) => {
+    const model = ai.models.find((item) => item.id === id);
+    if (model?.source !== "manual") return;
+    const models = ai.models.filter((item) => item.id !== id);
+    update({
+      models,
+      default_model_id: updateDefaultModelId(ai, models),
+    });
+    toast.success(t("ai.manualModelDeleted", { model: model.name }));
   };
 
   const updateCredential = (id: string, patch: Partial<AIProviderCredential>) => {
@@ -418,25 +501,84 @@ export function AiModelsTab() {
                       {enabledCount}/{group.models.length}
                     </span>
                   </button>
-                  {!isCollapsed
-                    ? group.models.map((model) => (
+                  {!isCollapsed ? (
+                    <>
+                      {group.credential ? (
+                        <div className="border-b border-border/60 px-3 py-2 pl-8">
+                          <div className="flex h-8 overflow-hidden rounded-md border border-border/60 bg-muted/12 transition-colors focus-within:border-primary/45 focus-within:bg-background/70 focus-within:ring-1 focus-within:ring-primary/15">
+                            <Input
+                              value={manualModelNames[group.groupKey] ?? ""}
+                              placeholder={t("ai.manualModelPlaceholder")}
+                              className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-3 font-mono text-xs shadow-none placeholder:text-muted-foreground/55 focus-visible:border-transparent focus-visible:ring-0"
+                              onChange={(event) =>
+                                setManualModelNames((prev) => ({
+                                  ...prev,
+                                  [group.groupKey]: event.target.value,
+                                }))
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" && group.credential) {
+                                  event.preventDefault();
+                                  addManualModel(group.credential);
+                                }
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!manualModelNames[group.groupKey]?.trim()}
+                              title={t("common.add")}
+                              className="h-full rounded-none border-l border-border/60 px-3 text-xs text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-35"
+                              onClick={() => group.credential && addManualModel(group.credential)}
+                            >
+                              <MdAdd />
+                              {t("common.add")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {group.models.map((model) => (
                         <div
                           key={model.id}
                           className="flex items-center gap-3 border-b border-border/60 px-3 py-2 pl-8 last:border-b-0"
                         >
-                          <div className="min-w-0 flex-1 truncate text-xs">{model.name}</div>
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <div className="min-w-0 truncate text-xs">{model.name}</div>
+                            {model.source === "manual" ? (
+                              <Badge
+                                variant="outline"
+                                className="h-5 border-border/70 px-1.5 text-[0.625rem] font-normal text-muted-foreground"
+                              >
+                                {t("ai.manualModelBadge")}
+                              </Badge>
+                            ) : null}
+                          </div>
                           <SettingSwitch
                             checked={model.enabled}
                             onChange={(enabled) => updateModel(model.id, { enabled })}
                           />
+                          {model.source === "manual" ? (
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              title={t("ai.deleteManualModel")}
+                              onClick={() => removeManualModel(model.id)}
+                            >
+                              <MdDelete />
+                            </Button>
+                          ) : null}
                         </div>
-                      ))
-                    : null}
+                      ))}
+                    </>
+                  ) : null}
                 </div>
               );
             })
           )}
         </div>
+        {enabledCredentials.length === 0 ? (
+          <div className="text-xs text-muted-foreground">{t("ai.manualModelNoProvider")}</div>
+        ) : null}
         {visibleModels.every((model) => !model.enabled) ? (
           <div className="text-xs text-amber-600">{t("ai.enableOneModelHint")}</div>
         ) : null}
