@@ -823,6 +823,20 @@ export interface FileEntry {
   mtime: number;
 }
 
+export interface FileProperties {
+  name: string;
+  is_dir: boolean;
+  is_symlink: boolean;
+  size: number;
+  permissions: string;
+  owner: string;
+  group: string;
+  uid: string;
+  gid: string;
+  mtime: number;
+  atime: number;
+}
+
 export interface FileExplorerProps {
   activeSessionId: string | null;
   activeSessionType: SessionType | null;

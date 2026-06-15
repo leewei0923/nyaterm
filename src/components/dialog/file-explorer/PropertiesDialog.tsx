@@ -14,23 +14,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { invoke } from "@/lib/invoke";
+import type { FileProperties } from "@/types/global";
 
 export interface PropertiesDialogData {
   sessionId: string;
   fullPath: string;
   name: string;
   is_dir: boolean;
-}
-
-interface FileProperties {
-  size: number;
-  permissions: string;
-  owner: string;
-  group: string;
-  uid: string;
-  gid: string;
-  mtime: number;
-  atime: number;
 }
 
 interface PropertiesDialogProps {
