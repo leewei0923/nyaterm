@@ -199,17 +199,16 @@ pub(super) fn build_client(model: &ResolvedAiModel, settings: &AiSettings) -> Ap
         .map(normalize_api_base_url)
         .transpose()?
         .filter(|value| !value.trim().is_empty());
+    let allows_empty_auth = model.provider_kind == AiProviderKind::OpenaiCompatible;
 
     let resolver =
         ServiceTargetResolver::from_resolver_fn(move |service_target: genai::ServiceTarget| {
-            let mut service_target = service_target;
-            if let Some(api_key) = api_key.clone() {
-                service_target.auth = AuthData::from_single(api_key);
-            }
-            if let Some(base_url) = base_url.clone() {
-                service_target.endpoint = Endpoint::from_owned(base_url);
-            }
-            Ok(service_target)
+            Ok(apply_service_target_overrides(
+                service_target,
+                api_key.clone(),
+                base_url.clone(),
+                allows_empty_auth,
+            ))
         });
 
     let web_config = WebConfig::default().with_default_headers(ai_request_headers(settings)?);
@@ -219,6 +218,23 @@ pub(super) fn build_client(model: &ResolvedAiModel, settings: &AiSettings) -> Ap
         .with_service_target_resolver(resolver)
         .with_web_config(web_config)
         .build())
+}
+
+fn apply_service_target_overrides(
+    mut service_target: genai::ServiceTarget,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    allows_empty_auth: bool,
+) -> genai::ServiceTarget {
+    if let Some(api_key) = api_key {
+        service_target.auth = AuthData::from_single(api_key);
+    } else if allows_empty_auth {
+        service_target.auth = AuthData::None;
+    }
+    if let Some(base_url) = base_url {
+        service_target.endpoint = Endpoint::from_owned(base_url);
+    }
+    service_target
 }
 
 fn effective_request_user_agent(settings: &AiSettings) -> &str {
@@ -376,6 +392,26 @@ fn openai_compatible_models_url(base_url: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use genai::resolver::{AuthData, Endpoint};
+
+    fn test_service_target(auth: AuthData) -> genai::ServiceTarget {
+        genai::ServiceTarget {
+            endpoint: Endpoint::from_static("https://default.example/v1/"),
+            auth,
+            model: ModelIden::new(AdapterKind::OpenAI, "test-model"),
+        }
+    }
+
+    fn test_credential(kind: AiProviderKind, api_key: Option<&str>) -> AiProviderCredential {
+        AiProviderCredential {
+            id: "credential-test".to_string(),
+            name: "Test Provider".to_string(),
+            provider_kind: kind,
+            base_url: Some("http://localhost:11434/v1/".to_string()),
+            api_key: api_key.map(str::to_string),
+            enabled: true,
+        }
+    }
 
     #[test]
     fn openai_compatible_models_url_accepts_missing_trailing_slash() {
@@ -442,6 +478,43 @@ mod tests {
             error
                 .to_string()
                 .contains("Invalid AI User-Agent header value")
+        );
+    }
+
+    #[test]
+    fn openai_compatible_empty_key_uses_no_auth_override() {
+        let target = apply_service_target_overrides(
+            test_service_target(AuthData::from_env("OPENAI_API_KEY")),
+            None,
+            Some("http://localhost:11434/v1/".to_string()),
+            true,
+        );
+
+        assert!(matches!(target.auth, AuthData::None));
+    }
+
+    #[test]
+    fn openai_compatible_non_empty_key_uses_configured_key() {
+        let target = apply_service_target_overrides(
+            test_service_target(AuthData::from_env("OPENAI_API_KEY")),
+            Some("configured-key".to_string()),
+            Some("http://localhost:11434/v1/".to_string()),
+            true,
+        );
+
+        assert!(matches!(target.auth, AuthData::Key(ref value) if value == "configured-key"));
+    }
+
+    #[test]
+    fn openai_empty_key_still_fails_validation() {
+        let credential = test_credential(AiProviderKind::Openai, None);
+        let error =
+            validate_model_credential(&AiProviderKind::Openai, Some(&credential)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("No API key configured for AI credential")
         );
     }
 }
