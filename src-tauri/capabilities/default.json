@@ -1,18 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
   "description": "Capability for the main window and child windows",
-  "windows": [
-    "main",
-    "main-*",
-    "settings",
-    "settings-*",
-    "new-session",
-    "new-session-*",
-    "quick-command",
-    "quick-command-*",
-    "auto-upload-*"
-  ],
+  "identifier": "default",
   "permissions": [
     "core:default",
     "opener:default",
@@ -54,5 +43,17 @@
     "core:window:allow-request-user-attention",
     "core:event:default",
     "core:webview:allow-create-webview-window"
+  ],
+  "windows": [
+    "main",
+    "main-*",
+    "settings",
+    "settings-*",
+    "new-session",
+    "new-session-*",
+    "quick-command",
+    "quick-command-*",
+    "auto-upload-*",
+    "file-editor-*"
   ]
 }
