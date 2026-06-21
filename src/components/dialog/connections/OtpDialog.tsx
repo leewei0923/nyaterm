@@ -23,6 +23,9 @@ export interface OtpPrompt {
 export interface OtpRequest {
   requestId: string;
   connectionName: string;
+  name?: string | null;
+  instructions?: string | null;
+  round?: number;
   prompts: OtpPrompt[];
   otpEntryId?: string;
   targetWindowLabel?: string | null;
@@ -30,7 +33,7 @@ export interface OtpRequest {
 
 interface OtpDialogProps {
   request: OtpRequest | null;
-  onDone: () => void;
+  onDone: (requestId: string) => void;
 }
 
 export function OtpDialog({ request, onDone }: OtpDialogProps) {
@@ -38,20 +41,24 @@ export function OtpDialog({ request, onDone }: OtpDialogProps) {
   const [responses, setResponses] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const requestId = request?.requestId;
+  const prompts = request?.prompts;
+  const challengeTitle = request?.name?.trim();
+  const challengeInstructions = request?.instructions?.trim();
 
   useEffect(() => {
-    if (request) {
-      setResponses(request.prompts.map(() => ""));
+    if (prompts) {
+      setResponses(prompts.map(() => ""));
       setSubmitting(false);
     }
-  }, [request]);
+  }, [prompts]);
 
   useEffect(() => {
-    if (request) {
+    if (requestId) {
       const timer = setTimeout(() => firstInputRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
-  }, [request]);
+  }, [requestId]);
 
   const handleSubmit = async () => {
     if (!request || submitting) return;
@@ -77,7 +84,7 @@ export function OtpDialog({ request, onDone }: OtpDialogProps) {
         error,
       });
     }
-    onDone();
+    onDone(request.requestId);
   };
 
   const handleCancel = async () => {
@@ -99,7 +106,7 @@ export function OtpDialog({ request, onDone }: OtpDialogProps) {
         error,
       });
     }
-    onDone();
+    onDone(request.requestId);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -124,13 +131,32 @@ export function OtpDialog({ request, onDone }: OtpDialogProps) {
     >
       <DialogContent className="max-w-sm overflow-x-hidden" onKeyDown={handleKeyDown}>
         <DialogHeader>
-          <DialogTitle className="text-sm">{t("otp.title")}</DialogTitle>
+          <DialogTitle className="text-sm">
+            {request?.round && request.round > 1
+              ? t("otp.titleWithRound", { round: request.round })
+              : t("otp.title")}
+          </DialogTitle>
           <DialogDescription className="text-xs">
             {t("otp.description", { name: request?.connectionName })}
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-w-0 space-y-3 py-2">
+          {(challengeTitle || challengeInstructions) && (
+            <div className="min-w-0 rounded-md border bg-muted/30 px-3 py-2">
+              {challengeTitle && (
+                <div className="break-words text-xs font-medium text-foreground">
+                  {challengeTitle}
+                </div>
+              )}
+              {challengeInstructions && (
+                <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
+                  {challengeInstructions}
+                </div>
+              )}
+            </div>
+          )}
+
           {request?.prompts.map((p, promptIndex) => (
             <div
               key={`${request.requestId}-${p.prompt}-${p.echo ? "echo" : "masked"}`}

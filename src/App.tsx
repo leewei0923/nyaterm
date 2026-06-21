@@ -2344,7 +2344,8 @@ function App() {
           onQuitConfirmOpenChange: setShowQuitConfirm,
           onQuitConfirm: handleQuitApplication,
           otpRequest,
-          onOtpDone: () => setOtpRequest(null),
+          onOtpDone: (requestId) =>
+            setOtpRequest((current) => (current?.requestId === requestId ? null : current)),
           hostKeyVerifyRequest,
           onHostKeyVerifyDone: () => setHostKeyVerifyRequest(null),
           modalChildWindowCount,

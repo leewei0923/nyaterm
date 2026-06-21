@@ -48,6 +48,9 @@ struct OtpPrompt {
 struct OtpRequestPayload {
     request_id: String,
     connection_name: String,
+    name: Option<String>,
+    instructions: Option<String>,
+    round: u32,
     prompts: Vec<OtpPrompt>,
     otp_entry_id: Option<String>,
     target_window_label: Option<String>,
@@ -744,6 +747,7 @@ async fn finish_keyboard_interactive(
         .await
         .map_err(|error| AppError::Auth(format!("Keyboard-interactive start failed: {}", error)))?;
     let mut pending_totp_use: Option<TotpUseCandidate> = None;
+    let mut round: u32 = 0;
 
     loop {
         match step {
@@ -790,10 +794,11 @@ async fn finish_keyboard_interactive(
                 ));
             }
             KeyboardInteractiveAuthResponse::InfoRequest {
-                name: _,
-                instructions: _,
+                name,
+                instructions,
                 prompts,
             } => {
+                round = round.saturating_add(1);
                 let hidden_prompts = prompts.iter().filter(|prompt| !prompt.echo).count();
                 log_structured(
                     StructuredLogLevel::Debug,
@@ -807,6 +812,7 @@ async fn finish_keyboard_interactive(
                         "mode": mode.label(),
                         "prompt_count": prompts.len(),
                         "hidden_prompts": hidden_prompts,
+                        "round": round,
                     })),
                     None,
                 );
@@ -831,7 +837,9 @@ async fn finish_keyboard_interactive(
                         None,
                     );
                     vec![password.to_string()]
-                } else if let Some(info) = otp_info.filter(|i| i.auto_fill) {
+                } else if let Some(info) =
+                    otp_info.filter(|i| i.auto_fill && should_auto_fill_otp_prompts(&prompts))
+                {
                     log_structured(
                         StructuredLogLevel::Info,
                         "security.flow",
@@ -843,6 +851,7 @@ async fn finish_keyboard_interactive(
                             "username": username,
                             "otp_entry_id": info.otp_id,
                             "prompt_count": prompts.len(),
+                            "round": round,
                         })),
                         None,
                     );
@@ -862,6 +871,9 @@ async fn finish_keyboard_interactive(
                     let payload = OtpRequestPayload {
                         request_id: request_id.clone(),
                         connection_name: connection_name.to_string(),
+                        name: normalize_optional_keyboard_interactive_text(&name),
+                        instructions: normalize_optional_keyboard_interactive_text(&instructions),
+                        round,
                         prompts: prompts
                             .iter()
                             .map(|prompt| OtpPrompt {
@@ -883,6 +895,7 @@ async fn finish_keyboard_interactive(
                             "username": username,
                             "prompt_count": payload.prompts.len(),
                             "otp_entry_id": payload.otp_entry_id,
+                            "round": payload.round,
                         })),
                         None,
                     );
@@ -1026,6 +1039,70 @@ fn should_auto_fill_password_prompts(prompts: &[client::Prompt]) -> bool {
         && is_password_keyboard_interactive_prompt(&prompts[0].prompt)
 }
 
+fn should_auto_fill_otp_prompts(prompts: &[client::Prompt]) -> bool {
+    prompts.len() == 1 && is_otp_keyboard_interactive_prompt(&prompts[0].prompt)
+}
+
+fn is_otp_keyboard_interactive_prompt(prompt: &str) -> bool {
+    let normalized = prompt.to_lowercase();
+
+    let selection_markers = [
+        "select",
+        "choose",
+        "choice",
+        "option",
+        "method",
+        "delivery",
+        "send to",
+        "send via",
+        "push",
+        "sms/email",
+        "sms or email",
+        "email or sms",
+        "选择",
+        "请选择",
+        "选项",
+        "方式",
+        "方法",
+        "发送到",
+        "发送至",
+    ];
+    if selection_markers
+        .iter()
+        .any(|marker| normalized.contains(marker))
+    {
+        return false;
+    }
+
+    [
+        "otp",
+        "totp",
+        "hotp",
+        "2fa",
+        "mfa",
+        "one-time",
+        "one time",
+        "verification code",
+        "authentication code",
+        "auth code",
+        "authenticator",
+        "passcode",
+        "token",
+        "验证码",
+        "校验码",
+        "动态码",
+        "动态密码",
+        "动态口令",
+        "一次性",
+        "令牌",
+        "双因素",
+        "二次",
+        "两步",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
 fn is_password_keyboard_interactive_prompt(prompt: &str) -> bool {
     let normalized = prompt.to_lowercase();
 
@@ -1067,12 +1144,18 @@ fn is_password_keyboard_interactive_prompt(prompt: &str) -> bool {
         .any(|marker| normalized.contains(marker))
 }
 
+fn normalize_optional_keyboard_interactive_text(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardInteractiveMode, TotpUseCandidate, is_password_keyboard_interactive_prompt,
-        is_totp_code_reused, record_totp_code_use, resolve_password_material,
-        seconds_until_next_totp_step, should_auto_fill_password_prompts, used_totp_codes,
+        KeyboardInteractiveMode, TotpUseCandidate, is_otp_keyboard_interactive_prompt,
+        is_password_keyboard_interactive_prompt, is_totp_code_reused, record_totp_code_use,
+        resolve_password_material, seconds_until_next_totp_step, should_auto_fill_otp_prompts,
+        should_auto_fill_password_prompts, used_totp_codes,
     };
     use crate::config::ConnectionAuth;
     use russh::client::Prompt;
@@ -1139,6 +1222,56 @@ mod tests {
         }];
 
         assert!(!should_auto_fill_password_prompts(&prompts));
+    }
+
+    #[test]
+    fn auto_fills_single_otp_keyboard_interactive_prompt() {
+        let prompts = vec![Prompt {
+            prompt: "Verification code: ".to_string(),
+            echo: false,
+        }];
+
+        assert!(should_auto_fill_otp_prompts(&prompts));
+        assert!(is_otp_keyboard_interactive_prompt("验证码: "));
+    }
+
+    #[test]
+    fn does_not_auto_fill_mfa_selection_prompts() {
+        for prompt in ["Select method:", "Option:", "1) SMS 2) Email"] {
+            let prompts = vec![Prompt {
+                prompt: prompt.to_string(),
+                echo: true,
+            }];
+
+            assert!(!should_auto_fill_otp_prompts(&prompts));
+        }
+    }
+
+    #[test]
+    fn password_prompt_does_not_trigger_otp_autofill() {
+        let prompts = vec![Prompt {
+            prompt: "Password: ".to_string(),
+            echo: false,
+        }];
+
+        assert!(should_auto_fill_password_prompts(&prompts));
+        assert!(!should_auto_fill_otp_prompts(&prompts));
+    }
+
+    #[test]
+    fn does_not_auto_fill_otp_for_multiple_prompts() {
+        let prompts = vec![
+            Prompt {
+                prompt: "Verification code: ".to_string(),
+                echo: false,
+            },
+            Prompt {
+                prompt: "Backup code: ".to_string(),
+                echo: false,
+            },
+        ];
+
+        assert!(!should_auto_fill_otp_prompts(&prompts));
     }
 
     #[test]

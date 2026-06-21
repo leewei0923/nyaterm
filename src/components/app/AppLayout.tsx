@@ -103,7 +103,7 @@ interface AppLayoutProps {
     onQuitConfirmOpenChange: (open: boolean) => void;
     onQuitConfirm: () => void;
     otpRequest: OtpRequest | null;
-    onOtpDone: () => void;
+    onOtpDone: (requestId: string) => void;
     hostKeyVerifyRequest: HostKeyVerifyRequest | null;
     onHostKeyVerifyDone: () => void;
     modalChildWindowCount: number;
